@@ -1,0 +1,101 @@
+# GPT-SoVITS Voice Cloning Guide
+
+An end-to-end, **English-language** tutorial for fine-tuning [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) v2 on a single GPU — with the ML theory you need to understand *why* it works, not just click-through instructions.
+
+Cloned a character voice from ~16 minutes of audio on a single RTX 5080 (16 GB VRAM, Windows 11). Outputs Japanese, English, and Chinese speech from arbitrary text. The official repo is excellent but assumes you know what you're doing and that you read Chinese; this guide is for the rest of us.
+
+## Who this is for
+
+- **Developers who want to understand voice cloning**, not just run a WebUI button. The docs explain transfer learning, semantic-token quantization, and the two-stage GPT/SoVITS design philosophy.
+- **Single-GPU users on Windows or Linux**. Standalone Python scripts replace the official DDP+Lightning training loop, which is fragile on Windows and unnecessary at this data scale.
+- **People who want a clean script base to extend**. Each script is ~100-200 lines, documented, and decoupled from the WebUI.
+
+## Quick start
+
+```bash
+# 1. Clone this guide and the upstream GPT-SoVITS repo side-by-side
+git clone https://github.com/Wty2003328/gpt-sovits-voice-cloning-guide
+git clone https://github.com/RVC-Boss/GPT-SoVITS
+
+# 2. Install deps (use a fresh conda/venv environment)
+cd gpt-sovits-voice-cloning-guide
+pip install -r scripts/requirements.txt
+# Also install GPT-SoVITS's own deps — see its README for the current list
+
+# 3. Download pretrained models per GPT-SoVITS instructions (gsv-v2final-pretrained, etc.)
+
+# 4. Run the pipeline (assumes my_speaker_vocals.wav is clean isolated speech)
+cd scripts
+python 01_slice_audio.py    --vocals ../my_speaker_vocals.wav --exp my_speaker
+python 02_asr_transcribe.py --exp my_speaker --lang ja
+python 03_extract_features.py --exp my_speaker
+python 04_extract_semantic.py --exp my_speaker
+python 05_train_sovits.py     --exp my_speaker --epochs 20
+python 06_train_gpt.py        --exp my_speaker --epochs 15
+python 07_inference.py --exp my_speaker --lang ja \
+    --text "こんにちは、はじめまして！" \
+    --ref-wav ../GPT-SoVITS/logs/my_speaker/0_sliced/0003.wav \
+    --ref-text "ここは私に任せて私を選んでくれる" --ref-lang ja \
+    --out hello.wav
+```
+
+For source audio with background music or sound effects, run the optional vocal-isolation step first:
+
+```bash
+python demucs_isolate.py --input my_video_audio.wav --output my_speaker_vocals.wav
+```
+
+## Documentation
+
+The docs are organized so you can read top-to-bottom for understanding, or jump to a specific section when you hit a problem.
+
+| Doc | What it covers |
+|---|---|
+| [01 — Theory](docs/01-theory.md) | Why fine-tuning works with so little data; transfer learning, few-shot voice cloning, the two-stage design |
+| [02 — Comparison](docs/02-comparison.md) | GPT-SoVITS vs RVC, CosyVoice, XTTS, Bark, Fish Speech — when to use each |
+| [03 — Architecture](docs/03-architecture.md) | GPT (Text2SemanticDecoder) and SoVITS (VITS-based) deep dive, with loss formulations |
+| [04 — Data pipeline](docs/04-data-pipeline.md) | Slicing, ASR, phonemization, HuBERT/BERT/semantic feature extraction |
+| [05 — Training](docs/05-training.md) | Hyperparameters, when to stop, reading the loss curves |
+| [06 — Inference](docs/06-inference.md) | How reference audio works, sampling parameters, choosing a good ref clip |
+| [07 — Windows guide](docs/07-windows-guide.md) | CUDA 13 issues, torchcodec failures, DDP bypass, the gotchas you'll hit |
+| [08 — Extending](docs/08-extending.md) | More data, more epochs, multi-speaker, integrating with VTuber pipelines |
+
+## Requirements
+
+- **GPU**: NVIDIA with ≥6 GB VRAM (tested on RTX 5080, 16 GB). CPU works for inference but training needs CUDA.
+- **OS**: Windows 11 (validated) or Linux. macOS unsupported by the underlying GPT-SoVITS.
+- **Audio**: ≥4 minutes of clean speech for usable results, ≥10 minutes for production quality. See [docs/04-data-pipeline.md](docs/04-data-pipeline.md) for what counts as "clean."
+- **Disk**: ~5 GB for pretrained models + dependencies.
+
+## Repo layout
+
+```
+gpt-sovits-voice-cloning-guide/
+├── README.md                # this file
+├── LICENSE                  # MIT
+├── docs/                    # tutorial documentation
+├── scripts/                 # standalone training & inference scripts
+│   ├── _common.py           #   shared setup helpers
+│   ├── 01_slice_audio.py    #   step-by-step pipeline
+│   ├── 02_asr_transcribe.py
+│   ├── 03_extract_features.py
+│   ├── 04_extract_semantic.py
+│   ├── 05_train_sovits.py
+│   ├── 06_train_gpt.py
+│   ├── 07_inference.py
+│   ├── demucs_isolate.py    #   optional vocal isolation
+│   └── requirements.txt
+├── configs/
+│   └── example_s2.json      # SoVITS v2 hyperparameter reference
+└── examples/                # sample outputs (added as the project matures)
+```
+
+## Acknowledgements
+
+- [RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) — the underlying model and codebase. Read their docs for the WebUI workflow.
+- [CorentinJ/Real-Time-Voice-Cloning](https://github.com/CorentinJ/Real-Time-Voice-Cloning) — early pioneer of few-shot voice cloning.
+- [VITS](https://arxiv.org/abs/2106.06103) and [HuBERT](https://arxiv.org/abs/2106.07447) — the architectural primitives.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

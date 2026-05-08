@@ -1,0 +1,24 @@
+# Tested with these versions on Windows 11 + RTX 5080 (CUDA 13.0). Newer/older
+# may work but the torchcodec/CTranslate2/CUDA combo is sensitive — see
+# docs/07-windows-guide.md for known gotchas.
+
+torch>=2.1
+torchaudio>=2.1
+numpy
+scipy
+soundfile
+librosa
+transformers>=4.30
+huggingface_hub
+nltk
+tqdm
+PyYAML
+
+# ASR
+faster-whisper
+
+# Vocal isolation (optional — skip if your source is already clean)
+demucs
+
+# These come from the GPT-SoVITS repo at runtime — clone it adjacent to this repo
+# and let GS_DIR point at it (default: ./GPT-SoVITS).

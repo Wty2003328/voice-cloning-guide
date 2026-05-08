@@ -1,0 +1,24 @@
+# Cloned dependency
+GPT-SoVITS/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Training artifacts
+logs/
+SoVITS_weights*/
+GPT_weights*/
+*.pth
+*.ckpt
+
+# Audio outputs (keep examples/ tracked, ignore everything else)
+*.wav
+!examples/*.wav
+
+# Editor
+.vscode/
+.idea/
+.DS_Store
