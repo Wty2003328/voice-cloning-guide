@@ -10,28 +10,36 @@ Cloned a character voice from ~16 minutes of audio on a single RTX 5080 (16 GB V
 - **Single-GPU users on Windows or Linux**. Standalone Python scripts replace the official DDP+Lightning training loop, which is fragile on Windows and unnecessary at this data scale.
 - **People who want a clean script base to extend**. Each script is ~100-200 lines, documented, and decoupled from the WebUI.
 
+## Setup
+
+For first-time setup (cloning both repos, installing PyTorch + CUDA, downloading pretrained models), follow **[docs/00-setup.md](docs/00-setup.md)** — it walks through everything end-to-end and takes ~30-60 minutes.
+
+In short, you'll end up with:
+
+```
+your_workspace/
+├── GPT-SoVITS/                          # upstream repo (RVC-Boss/GPT-SoVITS)
+│   └── GPT_SoVITS/pretrained_models/    # downloaded model weights
+└── gpt-sovits-voice-cloning-guide/      # this repo
+    └── scripts/                          # standalone training scripts
+```
+
 ## Quick start
 
+After setup completes:
+
 ```bash
-# 1. Clone this guide and the upstream GPT-SoVITS repo side-by-side
-git clone https://github.com/Wty2003328/gpt-sovits-voice-cloning-guide
-git clone https://github.com/RVC-Boss/GPT-SoVITS
+# Optional: if your source has BGM/SFX, isolate vocals first
+python scripts/demucs_isolate.py --input my_video_audio.wav --output my_speaker_vocals.wav
 
-# 2. Install deps (use a fresh conda/venv environment)
-cd gpt-sovits-voice-cloning-guide
-pip install -r scripts/requirements.txt
-# Also install GPT-SoVITS's own deps — see its README for the current list
-
-# 3. Download pretrained models per GPT-SoVITS instructions (gsv-v2final-pretrained, etc.)
-
-# 4. Run the pipeline (assumes my_speaker_vocals.wav is clean isolated speech)
+# Pipeline (each step writes outputs the next consumes)
 cd scripts
-python 01_slice_audio.py    --vocals ../my_speaker_vocals.wav --exp my_speaker
-python 02_asr_transcribe.py --exp my_speaker --lang ja
+python 01_slice_audio.py      --vocals ../my_speaker_vocals.wav --exp my_speaker
+python 02_asr_transcribe.py   --exp my_speaker --lang ja
 python 03_extract_features.py --exp my_speaker
 python 04_extract_semantic.py --exp my_speaker
-python 05_train_sovits.py     --exp my_speaker --epochs 20
-python 06_train_gpt.py        --exp my_speaker --epochs 15
+python 05_train_sovits.py     --exp my_speaker --epochs 20    # ~25 min on RTX 5080
+python 06_train_gpt.py        --exp my_speaker --epochs 15    # ~30 sec
 python 07_inference.py --exp my_speaker --lang ja \
     --text "こんにちは、はじめまして！" \
     --ref-wav ../GPT-SoVITS/logs/my_speaker/0_sliced/0003.wav \
@@ -39,11 +47,7 @@ python 07_inference.py --exp my_speaker --lang ja \
     --out hello.wav
 ```
 
-For source audio with background music or sound effects, run the optional vocal-isolation step first:
-
-```bash
-python demucs_isolate.py --input my_video_audio.wav --output my_speaker_vocals.wav
-```
+If you're not in `scripts/`, set `GS_DIR=/abs/path/to/GPT-SoVITS` so the scripts can locate the upstream repo.
 
 ## Documentation
 
@@ -51,6 +55,7 @@ The docs are organized so you can read top-to-bottom for understanding, or jump 
 
 | Doc | What it covers |
 |---|---|
+| [00 — Setup](docs/00-setup.md) | Full installation walkthrough: clone both repos, conda env, CUDA/PyTorch, model downloads |
 | [01 — Theory](docs/01-theory.md) | Why fine-tuning works with so little data; transfer learning, few-shot voice cloning, the two-stage design |
 | [02 — Comparison](docs/02-comparison.md) | GPT-SoVITS vs RVC, CosyVoice, XTTS, Bark, Fish Speech — when to use each |
 | [03 — Architecture](docs/03-architecture.md) | GPT (Text2SemanticDecoder) and SoVITS (VITS-based) deep dive, with loss formulations |
@@ -65,7 +70,9 @@ The docs are organized so you can read top-to-bottom for understanding, or jump 
 - **GPU**: NVIDIA with ≥6 GB VRAM (tested on RTX 5080, 16 GB). CPU works for inference but training needs CUDA.
 - **OS**: Windows 11 (validated) or Linux. macOS unsupported by the underlying GPT-SoVITS.
 - **Audio**: ≥4 minutes of clean speech for usable results, ≥10 minutes for production quality. See [docs/04-data-pipeline.md](docs/04-data-pipeline.md) for what counts as "clean."
-- **Disk**: ~5 GB for pretrained models + dependencies.
+- **Disk**: ~10 GB total — pretrained models ~5 GB, Python deps ~3 GB, training artifacts 1+ GB.
+
+Detailed install instructions in [docs/00-setup.md](docs/00-setup.md).
 
 ## Repo layout
 
