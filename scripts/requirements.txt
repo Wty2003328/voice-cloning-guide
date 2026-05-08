@@ -20,5 +20,8 @@ faster-whisper
 # Vocal isolation (optional — skip if your source is already clean)
 demucs
 
+# LoRA fine-tuning (required for v4 path — optional if you only use v2)
+peft
+
 # These come from the GPT-SoVITS repo at runtime — clone it adjacent to this repo
 # and let GS_DIR point at it (default: ./GPT-SoVITS).

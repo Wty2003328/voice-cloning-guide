@@ -1,6 +1,6 @@
 # GPT-SoVITS Voice Cloning Guide
 
-An end-to-end, **English-language** tutorial for fine-tuning [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) v2 on a single GPU — with the ML theory you need to understand *why* it works, not just click-through instructions.
+An end-to-end, **English-language** tutorial for fine-tuning [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) on a single GPU — with the ML theory you need to understand *why* it works, not just click-through instructions. Covers both **v2** (default, robust) and **v4** (LoRA-based, 48 kHz output).
 
 Cloned a character voice from ~16 minutes of audio on a single RTX 5080 (16 GB VRAM, Windows 11). Outputs Japanese, English, and Chinese speech from arbitrary text. The official repo is excellent but assumes you know what you're doing and that you read Chinese; this guide is for the rest of us.
 
@@ -32,19 +32,38 @@ After setup completes:
 # Optional: if your source has BGM/SFX, isolate vocals first
 python scripts/demucs_isolate.py --input my_video_audio.wav --output my_speaker_vocals.wav
 
-# Pipeline (each step writes outputs the next consumes)
+# Data pipeline (shared between v2 and v4 — each step writes outputs the next consumes)
 cd scripts
 python 01_slice_audio.py      --vocals ../my_speaker_vocals.wav --exp my_speaker
 python 02_asr_transcribe.py   --exp my_speaker --lang ja
 python 03_extract_features.py --exp my_speaker
 python 04_extract_semantic.py --exp my_speaker
-python 05_train_sovits.py     --exp my_speaker --epochs 20    # ~25 min on RTX 5080
-python 06_train_gpt.py        --exp my_speaker --epochs 15    # ~30 sec
+```
+
+Then pick **v2** (default, robust on noisy data) or **v4** (LoRA, 48 kHz output, recommended on clean data). See [09-v4.md](docs/09-v4.md) for the comparison.
+
+### v2 path — full fine-tune, 32 kHz
+
+```bash
+python 05_train_sovits.py --exp my_speaker --epochs 20                     # ~25 min on RTX 5080
+python 06_train_gpt.py    --exp my_speaker --epochs 15                     # ~30 sec
 python 07_inference.py --exp my_speaker --lang ja \
     --text "こんにちは、はじめまして！" \
     --ref-wav ../GPT-SoVITS/logs/my_speaker/0_sliced/0003.wav \
     --ref-text "ここは私に任せて私を選んでくれる" --ref-lang ja \
-    --out hello.wav
+    --out hello_v2.wav
+```
+
+### v4 path — LoRA fine-tune, 48 kHz
+
+```bash
+python 05_train_sovits_v4.py --exp my_speaker --epochs 20 --lora-rank 32   # ~25 min on RTX 5080
+python 06_train_gpt.py       --exp my_speaker --epochs 15 --pretrained-version v4
+python 07_inference_v4.py --exp my_speaker --lang ja \
+    --text "こんにちは、はじめまして！" \
+    --ref-wav ../GPT-SoVITS/logs/my_speaker/0_sliced/0003.wav \
+    --ref-text "ここは私に任せて私を選んでくれる" --ref-lang ja \
+    --out hello_v4.wav
 ```
 
 If you're not in `scripts/`, set `GS_DIR=/abs/path/to/GPT-SoVITS` so the scripts can locate the upstream repo.
@@ -64,6 +83,7 @@ The docs are organized so you can read top-to-bottom for understanding, or jump 
 | [06 — Inference](docs/06-inference.md) | How reference audio works, sampling parameters, choosing a good ref clip |
 | [07 — Windows guide](docs/07-windows-guide.md) | CUDA 13 issues, torchcodec failures, DDP bypass, the gotchas you'll hit |
 | [08 — Extending](docs/08-extending.md) | More data, more epochs, multi-speaker, integrating with VTuber pipelines |
+| [09 — v4](docs/09-v4.md) | The v4 path: LoRA fine-tuning, 48 kHz vocoder, when v4 beats v2 |
 
 ## Requirements
 
@@ -81,16 +101,18 @@ gpt-sovits-voice-cloning-guide/
 ├── README.md                # this file
 ├── LICENSE                  # MIT
 ├── docs/                    # tutorial documentation
-├── scripts/                 # standalone training & inference scripts
-│   ├── _common.py           #   shared setup helpers
-│   ├── 01_slice_audio.py    #   step-by-step pipeline
+├── scripts/                  # standalone training & inference scripts
+│   ├── _common.py            #   shared setup helpers
+│   ├── 01_slice_audio.py     #   data pipeline (shared between v2 and v4)
 │   ├── 02_asr_transcribe.py
 │   ├── 03_extract_features.py
 │   ├── 04_extract_semantic.py
-│   ├── 05_train_sovits.py
-│   ├── 06_train_gpt.py
-│   ├── 07_inference.py
-│   ├── demucs_isolate.py    #   optional vocal isolation
+│   ├── 05_train_sovits.py    #   v2 SoVITS — full fine-tune
+│   ├── 05_train_sovits_v4.py #   v4 SoVITS — LoRA fine-tune
+│   ├── 06_train_gpt.py       #   GPT — works for v2 or v4 via --pretrained-version
+│   ├── 07_inference.py       #   v2 inference — 32 kHz output
+│   ├── 07_inference_v4.py    #   v4 inference — 48 kHz output via vocoder
+│   ├── demucs_isolate.py     #   optional vocal isolation
 │   └── requirements.txt
 ├── configs/
 │   └── example_s2.json      # SoVITS v2 hyperparameter reference

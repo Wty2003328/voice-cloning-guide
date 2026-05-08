@@ -24,12 +24,19 @@ def main():
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--warmup-steps", type=int, default=200)
     p.add_argument("--device", default="cuda:0")
+    p.add_argument("--pretrained-version", choices=["v2", "v4"], default="v2",
+                   help="Which pretrained S1 to base fine-tune on. v2=s1bert25hz, v4=s1v3.")
+    p.add_argument("--out-subdir", default=None,
+                   help="Override checkpoint subdir (default: GPT_weights_<pretrained-version>)")
     args = p.parse_args()
 
     gs_dir = setup(Path(args.gs_dir))
-    paths = pretrained_paths(gs_dir)
+    paths = pretrained_paths(gs_dir, version=args.pretrained_version)
     exp_dir = gs_dir / "logs" / args.exp
     DEVICE = torch.device(args.device)
+    out_subdir = args.out_subdir or f"GPT_weights_{args.pretrained_version}"
+    if args.pretrained_version == "v4":
+        out_subdir = "GPT_weights_v3"  # upstream convention: v3/v4 share s1v3 → v3 dir
 
     from AR.data.dataset import Text2SemanticDataset
     from GPT_SoVITS.AR.models.t2s_lightning_module import Text2SemanticLightningModule
@@ -66,7 +73,7 @@ def main():
         betas=(0.9, 0.95), weight_decay=0.01,
     )
 
-    out_dir = gs_dir / "GPT_weights_v2"
+    out_dir = gs_dir / out_subdir
     out_dir.mkdir(parents=True, exist_ok=True)
     global_step = 0
 

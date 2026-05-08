@@ -23,15 +23,31 @@ def setup(gs_dir: Path = DEFAULT_GS_DIR, version: str = "v2") -> Path:
     return gs_dir
 
 
-def pretrained_paths(gs_dir: Path):
-    """Standard paths to the v2 pretrained models."""
+def pretrained_paths(gs_dir: Path, version: str = "v2"):
+    """Pretrained model paths. version ∈ {'v2', 'v4'}.
+
+    v2 uses gsv-v2final-pretrained for SoVITS + s1bert25hz... for GPT.
+    v4 uses gsv-v4-pretrained/s2Gv4.pth + vocoder.pth + s1v3.ckpt for GPT.
+    """
     base = Path(gs_dir) / "GPT_SoVITS" / "pretrained_models"
-    return {
-        "s2g": str(base / "gsv-v2final-pretrained" / "s2G2333k.pth"),
-        "s2d": str(base / "gsv-v2final-pretrained" / "s2D2333k.pth"),
-        "s1": str(base / "gsv-v2final-pretrained"
-                       / "s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt"),
+    common = {
         "cnhubert": str(base / "chinese-hubert-base"),
         "bert": str(base / "chinese-roberta-wwm-ext-large"),
         "s2_config": str(Path(gs_dir) / "GPT_SoVITS" / "configs" / "s2.json"),
     }
+    if version == "v2":
+        return {
+            **common,
+            "s2g": str(base / "gsv-v2final-pretrained" / "s2G2333k.pth"),
+            "s2d": str(base / "gsv-v2final-pretrained" / "s2D2333k.pth"),
+            "s1": str(base / "gsv-v2final-pretrained"
+                           / "s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt"),
+        }
+    if version == "v4":
+        return {
+            **common,
+            "s2g": str(base / "gsv-v4-pretrained" / "s2Gv4.pth"),
+            "vocoder": str(base / "gsv-v4-pretrained" / "vocoder.pth"),
+            "s1": str(base / "s1v3.ckpt"),
+        }
+    raise ValueError(f"Unknown version: {version!r} (expected 'v2' or 'v4')")
