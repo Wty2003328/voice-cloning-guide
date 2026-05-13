@@ -4,6 +4,15 @@ An end-to-end, **English-language** tutorial for fine-tuning [GPT-SoVITS](https:
 
 Cloned a character voice from ~16 minutes of audio on a single RTX 5080 (16 GB VRAM, Windows 11). Outputs Japanese, English, and Chinese speech from arbitrary text. The official repo is excellent but assumes you know what you're doing and that you read Chinese; this guide is for the rest of us.
 
+## Two tracks
+
+This guide serves two audiences:
+
+- **Quick-start track** — [**quickstart.md**](quickstart.md): clone a voice and start a TTS server in ~45 minutes. No theory, just commands. Skip straight there if you want results fast.
+- **Learning track** — the docs below teach the ML behind every step: architecture, loss functions, sampling parameters, and why the pipeline works. Start with [01 — Theory](docs/01-theory.md).
+
+Both tracks share the same scripts and upstream repo.
+
 ## Who this is for
 
 - **Developers who want to understand voice cloning**, not just run a WebUI button. The docs explain transfer learning, semantic-token quantization, and the two-stage GPT/SoVITS design philosophy.
@@ -68,9 +77,9 @@ python 07_inference_v4.py --exp my_speaker --lang ja \
 
 If you're not in `scripts/`, set `GS_DIR=/abs/path/to/GPT-SoVITS` so the scripts can locate the upstream repo.
 
-## Documentation
+## Documentation (learning track)
 
-The docs are organized so you can read top-to-bottom for understanding, or jump to a specific section when you hit a problem.
+The docs are organized so you can read top-to-bottom for understanding, or jump to a specific section when you hit a problem. For the streamlined version, see [quickstart.md](quickstart.md).
 
 | Doc | What it covers |
 |---|---|

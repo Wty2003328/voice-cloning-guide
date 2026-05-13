@@ -69,6 +69,8 @@ A common use case is wiring this into a VTuber stack:
 
 1. **LLM** generates dialogue text → 2. **GPT-SoVITS** synthesizes voice → 3. **Live2D / VRM** model animates with lipsync → 4. Audio + video out to OBS.
 
+For a complete worked example — from trained model to a live desktop companion with cross-language TTS — see the [quick-start guide](../quickstart.md#5-deploy-to-zeroclaw-companion), which walks through deploying to zeroclaw-companion.
+
 For lipsync, you can either:
 - Use audio-to-mouth movement libraries like [VTube Studio's automatic lip sync](https://denchisoft.com/) (works on output WAV).
 - Or extract phoneme timing from the SoVITS output (semantic tokens are roughly aligned at 25 Hz) and drive Live2D parameters directly.
