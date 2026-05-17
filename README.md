@@ -1,139 +1,157 @@
-# GPT-SoVITS Voice Cloning Guide
+# Open-Source TTS Guide (2026)
 
-An end-to-end, **English-language** tutorial for fine-tuning [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) on a single GPU — with the ML theory you need to understand *why* it works, not just click-through instructions. Covers both **v2** (default, robust) and **v4** (LoRA-based, 48 kHz output).
+A vendor-neutral, hands-on comparison of open-source text-to-speech
+models for production use. Picks the right model per language, per
+license, per deployment constraint — and shows you how to actually run
+it.
 
-Cloned a character voice from ~16 minutes of audio on a single RTX 5080 (16 GB VRAM, Windows 11). Outputs Japanese, English, and Chinese speech from arbitrary text. The official repo is excellent but assumes you know what you're doing and that you read Chinese; this guide is for the rest of us.
+This started as a GPT-SoVITS fine-tuning tutorial, expanded to cover
+Qwen3-TTS zero-shot cloning, and is now reorganized into a **broader
+TTS atlas** because no single model wins across all languages and use
+cases. The original recipes still live here (see [Path A](#path-a--zero-shot-cloning)
+and [Path B](#path-b--fine-tune-training)) — what's new is the
+landscape view and per-language model selection guidance.
 
-## Two tracks
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-This guide serves two audiences:
+## What this guide answers
 
-- **Quick-start track** — [**quickstart.md**](quickstart.md): clone a voice and start a TTS server in ~45 minutes. No theory, just commands. Skip straight there if you want results fast.
-- **Learning track** — the docs below teach the ML behind every step: architecture, loss functions, sampling parameters, and why the pipeline works. Start with [01 — Theory](docs/01-theory.md).
+| Question | Where to look |
+|---|---|
+| "Which model should I use for Japanese / Chinese / English?" | [docs/per-language/](docs/per-language/) |
+| "What are the trade-offs of model X?" | [docs/models/](docs/models/) |
+| "Why are there so many TTS models?" (AR vs non-AR, multilingual vs specialized, licenses) | [docs/00-landscape-2026.md](docs/00-landscape-2026.md) |
+| "How do I deploy multiple models behind one API?" | [docs/deployment/multi-engine.md](docs/deployment/multi-engine.md) |
+| "How do I clone a voice from a short reference?" | [docs/10-zero-shot-cloning.md](docs/10-zero-shot-cloning.md) (Qwen3-TTS recipe) |
+| "How do I fine-tune a custom voice model?" | [docs/models/gpt-sovits-v4.md](docs/models/gpt-sovits-v4.md) (GPT-SoVITS recipe) |
+| "How do I get sub-real-time inference?" | [docs/13-inference-optimization.md](docs/13-inference-optimization.md) |
 
-Both tracks share the same scripts and upstream repo.
+## TL;DR — recommendations as of 2026-05
 
-## Who this is for
+| Language | Top pick | Why | License |
+|---|---|---|---|
+| **Japanese** | [**Style-Bert-VITS2 JP-Extra**](docs/models/style-bert-vits2.md) (fine-tuned per voice) | Rule-based pitch accent via pyopenjtalk+Unidic (not "learn-and-hope"); MOS 4.37 vs human 4.38 | AGPL-3.0 code (commercial OK via IPC sidecar) |
+| **Chinese** | [**CosyVoice 3 (Fun-0.5B-2512)**](docs/models/cosyvoice-3.md) | Apache, CER 0.81%, SIM 78% (beats human ref); 4× speedup with TRT-LLM (RTF 0.10 on 5080) | Apache-2.0 |
+| **English** | [**Higgs Audio v2.5 (1B)**](docs/models/higgs-audio.md) | Apache; only candidate with explicit cross-lingual voice clone (keeps voice ID across all 3 engines); 75.7% EmergentTTS-Eval emotions win vs gpt-4o-mini-tts | Apache-2.0 |
+| **Multilingual single-model** (all three in one) | [**Qwen3-TTS-12Hz-1.7B-Base**](docs/models/qwen3-tts.md) | Apache, true zero-shot, sub-real-time after kernel-opt (~6× over baseline), but JA pitch-accent imperfect and digit-runaway needs pre-normalization | Apache-2.0 |
+| **Best zero-shot voice clone** (3-30s reference → any voice) | Qwen3-TTS or Higgs Audio v2.5 | Both Apache, no training, multilingual | Apache-2.0 |
+| **Best per-character voice quality** (10+ min training audio) | GPT-SoVITS v4 with LoRA | MIT, learns speaker prosody not just timbre | MIT |
 
-- **Developers who want to understand voice cloning**, not just run a WebUI button. The docs explain transfer learning, semantic-token quantization, and the two-stage GPT/SoVITS design philosophy.
-- **Single-GPU users on Windows or Linux**. Standalone Python scripts replace the official DDP+Lightning training loop, which is fragile on Windows and unnecessary at this data scale.
-- **People who want a clean script base to extend**. Each script is ~100-200 lines, documented, and decoupled from the WebUI.
+Architecture for multi-language deployments:
+**3 sidecars, lazy-load + LRU** (see [multi-engine.md](docs/deployment/multi-engine.md)).
+Full research report at [tts_lab/research_per_language_tts_2026.md](https://github.com/Wty2003328/gpt-sovits-voice-cloning-guide)
+(60+ cited sources, 9 candidates analyzed, 6 honorable mentions evaluated and excluded).
 
-## Setup
+## Why no single model wins
 
-For first-time setup (cloning both repos, installing PyTorch + CUDA, downloading pretrained models), follow **[docs/00-setup.md](docs/00-setup.md)** — it walks through everything end-to-end and takes ~30-60 minutes.
+- **Training data is language-skewed.** English-centric models treat
+  JA/ZH as second-class even when nominally "multilingual." Native-JA
+  models (VOICEVOX, Style-Bert-VITS2) get prosody right; multilingual
+  models trip on pitch accent.
+- **Phonemization is language-specific.** Japanese needs MeCab +
+  pitch-accent dictionaries. Chinese needs tone marking. English needs
+  stress prediction. Generic char-level tokenization works for the
+  common case but fails on edge inputs (dates, numbers, abbreviations).
+- **License fragmentation.** SOTA quality often comes with CC-BY-NC
+  (IndexTTS 2.5, F5-TTS, MaskGCT, Spark-TTS). Commercial-OK weights are
+  rarer and usually 1-2 generations behind SOTA.
+- **Different architectures have different failure modes.**
+  Autoregressive models can loop / run away on out-of-distribution
+  input. Non-autoregressive (diffusion / flow-matching) models are
+  steadier but harder to fine-tune for new voices.
 
-In short, you'll end up with:
+See [docs/00-landscape-2026.md](docs/00-landscape-2026.md) for the full
+architectural taxonomy and the trade-off matrices.
 
-```
-your_workspace/
-├── GPT-SoVITS/                          # upstream repo (RVC-Boss/GPT-SoVITS)
-│   └── GPT_SoVITS/pretrained_models/    # downloaded model weights
-└── gpt-sovits-voice-cloning-guide/      # this repo
-    └── scripts/                          # standalone training scripts
-```
+## Path A — Zero-shot cloning (give me a voice in 3 seconds)
 
-## Quick start
-
-After setup completes:
+The Qwen3-TTS quickstart. Single Apache-2.0 model handles JA/ZH/EN with
+acceptable quality. Best when you want to copy an existing voice with
+no training pipeline.
 
 ```bash
-# Optional: if your source has BGM/SFX, isolate vocals first
-python scripts/demucs_isolate.py --input my_video_audio.wav --output my_speaker_vocals.wav
+pip install -U qwen-tts huggingface_hub soundfile
+huggingface-cli download Qwen/Qwen3-TTS-12Hz-1.7B-Base --local-dir ./qwen3-tts-1.7b-base
+python scripts/zero_shot_clone.py \
+    --model-dir ./qwen3-tts-1.7b-base \
+    --reference my_voice.wav \
+    --reference-text "Hello, this is my reference recording." \
+    --text "I can now speak any text you want." \
+    --language English \
+    --out cloned.wav
+```
 
-# Data pipeline (shared between v2 and v4 — each step writes outputs the next consumes)
+Full tutorial: [docs/10-zero-shot-cloning.md](docs/10-zero-shot-cloning.md).
+
+## Path B — Fine-tune training (best per-character quality)
+
+The GPT-SoVITS v4 LoRA pipeline. Needs ~10-20 minutes of training audio
++ ~30-60 min training on RTX 5080. Highest quality for a specific
+character voice.
+
+```bash
+python scripts/demucs_isolate.py --input video_audio.wav --output speaker_vocals.wav
 cd scripts
-python 01_slice_audio.py      --vocals ../my_speaker_vocals.wav --exp my_speaker
+python 01_slice_audio.py      --vocals ../speaker_vocals.wav --exp my_speaker
 python 02_asr_transcribe.py   --exp my_speaker --lang ja
 python 03_extract_features.py --exp my_speaker
 python 04_extract_semantic.py --exp my_speaker
-```
-
-Then pick **v2** (default, robust on noisy data) or **v4** (LoRA, 48 kHz output, recommended on clean data). See [09-v4.md](docs/09-v4.md) for the comparison.
-
-### v2 path — full fine-tune, 32 kHz
-
-```bash
-python 05_train_sovits.py --exp my_speaker --epochs 20                     # ~25 min on RTX 5080
-python 06_train_gpt.py    --exp my_speaker --epochs 15                     # ~30 sec
-python 07_inference.py --exp my_speaker --lang ja \
-    --text "こんにちは、はじめまして！" \
+python 05_train_sovits_v4.py  --exp my_speaker --epochs 20 --lora-rank 32
+python 06_train_gpt.py        --exp my_speaker --epochs 15 --pretrained-version v4
+python 07_inference_v4.py     --exp my_speaker --lang ja --text "こんにちは！" \
     --ref-wav ../GPT-SoVITS/logs/my_speaker/0_sliced/0003.wav \
     --ref-text "ここは私に任せて私を選んでくれる" --ref-lang ja \
-    --out hello_v2.wav
+    --out hello.wav
 ```
 
-### v4 path — LoRA fine-tune, 48 kHz
+Full tutorial: [docs/models/gpt-sovits-v4.md](docs/models/gpt-sovits-v4.md)
+(consolidated deep dive — recipe + architecture + extending) plus the
+training scripts in [`scripts/`](scripts/).
 
-```bash
-python 05_train_sovits_v4.py --exp my_speaker --epochs 20 --lora-rank 32   # ~25 min on RTX 5080
-python 06_train_gpt.py       --exp my_speaker --epochs 15 --pretrained-version v4
-python 07_inference_v4.py --exp my_speaker --lang ja \
-    --text "こんにちは、はじめまして！" \
-    --ref-wav ../GPT-SoVITS/logs/my_speaker/0_sliced/0003.wav \
-    --ref-text "ここは私に任せて私を選んでくれる" --ref-lang ja \
-    --out hello_v4.wav
-```
+## Documentation map
 
-If you're not in `scripts/`, set `GS_DIR=/abs/path/to/GPT-SoVITS` so the scripts can locate the upstream repo.
+### Landscape + decision-making
+- [docs/00-landscape-2026.md](docs/00-landscape-2026.md) — TTS architectures, license decision matrix, why so many models
+- [docs/per-language/](docs/per-language/) — model recommendations per language
+- [docs/models/](docs/models/) — deep dive per model (pros/cons, deployment, quality)
 
-## Documentation (learning track)
+### Practical recipes
+- [docs/10-zero-shot-cloning.md](docs/10-zero-shot-cloning.md) — Qwen3-TTS quickstart and tuning
+- [docs/11-multilingual.md](docs/11-multilingual.md) — cross-lingual cloning (one model, many languages)
+- [docs/models/gpt-sovits-v4.md](docs/models/gpt-sovits-v4.md) — GPT-SoVITS v4 LoRA fine-tune (consolidated)
+- [docs/12-integration.md](docs/12-integration.md) — wrapping any TTS as a Provider-Spec sidecar
+- [docs/07-windows-guide.md](docs/07-windows-guide.md) — Windows-specific quirks (CUDA, build flags, audio I/O)
 
-The docs are organized so you can read top-to-bottom for understanding, or jump to a specific section when you hit a problem. For the streamlined version, see [quickstart.md](quickstart.md).
+### Theory + comparison
+- [docs/01-theory.md](docs/01-theory.md) — TTS theory (transfer learning, two-stage design, info bottleneck) — universal, framed via GPT-SoVITS
+- [docs/02-comparison.md](docs/02-comparison.md) — cross-model decision tree ("when to use which") for 14+ models
 
-| Doc | What it covers |
-|---|---|
-| [00 — Setup](docs/00-setup.md) | Full installation walkthrough: clone both repos, conda env, CUDA/PyTorch, model downloads |
-| [01 — Theory](docs/01-theory.md) | Why fine-tuning works with so little data; transfer learning, few-shot voice cloning, the two-stage design |
-| [02 — Comparison](docs/02-comparison.md) | GPT-SoVITS vs RVC, CosyVoice, XTTS, Bark, Fish Speech — when to use each |
-| [03 — Architecture](docs/03-architecture.md) | GPT (Text2SemanticDecoder) and SoVITS (VITS-based) deep dive, with loss formulations |
-| [04 — Data pipeline](docs/04-data-pipeline.md) | Slicing, ASR, phonemization, HuBERT/BERT/semantic feature extraction |
-| [05 — Training](docs/05-training.md) | Hyperparameters, when to stop, reading the loss curves |
-| [06 — Inference](docs/06-inference.md) | How reference audio works, sampling parameters, choosing a good ref clip |
-| [07 — Windows guide](docs/07-windows-guide.md) | CUDA 13 issues, torchcodec failures, DDP bypass, the gotchas you'll hit |
-| [08 — Extending](docs/08-extending.md) | More data, more epochs, multi-speaker, integrating with VTuber pipelines |
-| [09 — v4](docs/09-v4.md) | The v4 path: LoRA fine-tuning, 48 kHz vocoder, when v4 beats v2 |
+### Performance + optimization
+- [docs/13-inference-optimization.md](docs/13-inference-optimization.md) — kernel-level optimization (T1+T2+T3+T4-prealloc on Qwen3-TTS, 5.98× over baseline; tactics generalize to most AR TTS)
+- [docs/deployment/multi-engine.md](docs/deployment/multi-engine.md) — multi-model sidecar router architecture
 
-## Requirements
+## Validated on
 
-- **GPU**: NVIDIA with ≥6 GB VRAM (tested on RTX 5080, 16 GB). CPU works for inference but training needs CUDA.
-- **OS**: Windows 11 (validated) or Linux. macOS unsupported by the underlying GPT-SoVITS.
-- **Audio**: ≥4 minutes of clean speech for usable results, ≥10 minutes for production quality. See [docs/04-data-pipeline.md](docs/04-data-pipeline.md) for what counts as "clean."
-- **Disk**: ~10 GB total — pretrained models ~5 GB, Python deps ~3 GB, training artifacts 1+ GB.
+| Track | Hardware | OS | GPU mem | Model versions tested |
+|---|---|---|---|---|
+| Zero-shot (Qwen3-TTS) | RTX 5080 (Blackwell) | Windows 11 | 16 GB | Qwen3-TTS-12Hz-1.7B-Base, qwen-tts 0.1.x, torch 2.11+cu128 |
+| Fine-tune (GPT-SoVITS) | RTX 5080 | Windows 11 | 16 GB | GPT-SoVITS v4 (LoRA), pretrained s2Gv4 |
 
-Detailed install instructions in [docs/00-setup.md](docs/00-setup.md).
+## How to contribute a model page
 
-## Repo layout
+If you've deployed a TTS model not yet covered:
+1. Copy [docs/models/_template.md](docs/models/_template.md) (coming)
+2. Fill in: license, quality benchmarks, voice-clone capability,
+   phonemization, VRAM, RTF, Windows-deploy difficulty, known failure
+   modes
+3. Open a PR
 
-```
-gpt-sovits-voice-cloning-guide/
-├── README.md                # this file
-├── LICENSE                  # MIT
-├── docs/                    # tutorial documentation
-├── scripts/                  # standalone training & inference scripts
-│   ├── _common.py            #   shared setup helpers
-│   ├── 01_slice_audio.py     #   data pipeline (shared between v2 and v4)
-│   ├── 02_asr_transcribe.py
-│   ├── 03_extract_features.py
-│   ├── 04_extract_semantic.py
-│   ├── 05_train_sovits.py    #   v2 SoVITS — full fine-tune
-│   ├── 05_train_sovits_v4.py #   v4 SoVITS — LoRA fine-tune
-│   ├── 06_train_gpt.py       #   GPT — works for v2 or v4 via --pretrained-version
-│   ├── 07_inference.py       #   v2 inference — 32 kHz output
-│   ├── 07_inference_v4.py    #   v4 inference — 48 kHz output via vocoder
-│   ├── demucs_isolate.py     #   optional vocal isolation
-│   └── requirements.txt
-├── configs/
-│   └── example_s2.json      # SoVITS v2 hyperparameter reference
-└── examples/                # sample outputs (added as the project matures)
-```
+## Project history
 
-## Acknowledgements
-
-- [RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) — the underlying model and codebase. Read their docs for the WebUI workflow.
-- [CorentinJ/Real-Time-Voice-Cloning](https://github.com/CorentinJ/Real-Time-Voice-Cloning) — early pioneer of few-shot voice cloning.
-- [VITS](https://arxiv.org/abs/2106.06103) and [HuBERT](https://arxiv.org/abs/2106.07447) — the architectural primitives.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+This repo started as `gpt-sovits-voice-cloning-guide` — a hands-on
+tutorial for fine-tuning GPT-SoVITS v4. As the open-source TTS
+landscape diversified (zero-shot via Qwen3-TTS, native-JA via
+Style-Bert-VITS2, fast-EN via Kokoro, etc.), the original mono-model
+framing stopped serving readers who needed to pick AMONG models. The
+2026 reorg keeps every original chapter as a hands-on recipe but
+reframes the entry point as a comparison-first resource.

@@ -36,7 +36,7 @@ def main():
         hps.data.filter_length // 2 + 1,
         hps.train.segment_size // hps.data.hop_length,
         n_speakers=hps.data.n_speakers,
-        version="v2",
+        version="v4",
         **hps.model,
     )
     vq = (vq.half() if is_half else vq).to(DEVICE).eval()

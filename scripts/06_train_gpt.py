@@ -24,8 +24,8 @@ def main():
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--warmup-steps", type=int, default=200)
     p.add_argument("--device", default="cuda:0")
-    p.add_argument("--pretrained-version", choices=["v2", "v4"], default="v2",
-                   help="Which pretrained S1 to base fine-tune on. v2=s1bert25hz, v4=s1v3.")
+    p.add_argument("--pretrained-version", choices=["v4"], default="v4",
+                   help="Which pretrained S1 to base fine-tune on. v4=s1v3 (canonical; v2 support removed 2026-05).")
     p.add_argument("--out-subdir", default=None,
                    help="Override checkpoint subdir (default: GPT_weights_<pretrained-version>)")
     args = p.parse_args()

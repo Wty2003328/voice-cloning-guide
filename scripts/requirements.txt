@@ -1,7 +1,11 @@
 # Tested with these versions on Windows 11 + RTX 5080 (CUDA 13.0). Newer/older
 # may work but the torchcodec/CTranslate2/CUDA combo is sensitive — see
 # docs/07-windows-guide.md for known gotchas.
+#
+# Path A (zero-shot Qwen3-TTS) and Path B (fine-tune GPT-SoVITS) share most
+# requirements. Items marked [A] are zero-shot-only; [B] are fine-tune-only.
 
+# Core
 torch>=2.1
 torchaudio>=2.1
 numpy
@@ -14,14 +18,18 @@ nltk
 tqdm
 PyYAML
 
-# ASR
+# [A] Zero-shot voice cloning — Qwen3-TTS
+qwen-tts>=0.1.1
+
+# ASR (transcript generation for reference clips, eval back-transcription)
 faster-whisper
 
 # Vocal isolation (optional — skip if your source is already clean)
 demucs
 
-# LoRA fine-tuning (required for v4 path — optional if you only use v2)
+# [B] LoRA fine-tuning (v4 — the canonical fine-tune path documented in
+# docs/models/gpt-sovits-v4.md)
 peft
 
-# These come from the GPT-SoVITS repo at runtime — clone it adjacent to this repo
-# and let GS_DIR point at it (default: ./GPT-SoVITS).
+# [B] The GPT-SoVITS repo itself is cloned at runtime — clone adjacent to
+# this guide and point GS_DIR at it (default: ./GPT-SoVITS).

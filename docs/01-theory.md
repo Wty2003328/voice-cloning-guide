@@ -81,4 +81,4 @@ This is also why the model's quality plateaus around 15-30 minutes of training d
 - [VITS paper](https://arxiv.org/abs/2106.06103) — the underlying TTS architecture for the SoVITS stage.
 - [HuBERT paper](https://arxiv.org/abs/2106.07447) — self-supervised speech representation.
 - [VALL-E paper](https://arxiv.org/abs/2301.02111) — uses a similar quantize-then-language-model pattern at larger scale.
-- [03 — Architecture](03-architecture.md) — the concrete model components, with shapes and losses.
+- [models/gpt-sovits-v4.md](models/gpt-sovits-v4.md) — concrete GPT-SoVITS model components with shapes (consolidated from the old `03-architecture.md`).

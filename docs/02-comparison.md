@@ -1,25 +1,108 @@
 # 02 — How GPT-SoVITS Compares to Other Voice Cloning Models
 
-A pragmatic comparison of the dominant open-source voice cloning systems as of 2026.
+A pragmatic comparison of the dominant open-source voice cloning systems as of **May 2026**.
 
 ## At a glance
 
 | Model | Type | Min audio | Quality | Speed | Languages | Windows-friendly |
 |---|---|---|---|---|---|---|
+| **Qwen3-TTS-12Hz-1.7B-Base** ★ | Zero-shot TTS | 3s ref | High | Fast (~1× RT) | 10 (zh/en/ja/ko/de/fr/ru/pt/es/it) | ✅ Yes |
+| **Fun-CosyVoice3-0.5B-2512** | Zero-shot TTS | 3s ref | High | Fast (~0.6× RT) | 9 + 18 Chinese dialects (incl. Cantonese) | ⚠️ Needs proprietary ttsfrd resource |
+| **IndexTTS-2** | Zero-shot TTS | 3-10s ref | High (anime expressive) | Fast | zh / en / ja only | ✅ Yes |
+| **Higgs Audio v2.5** | Zero-shot TTS | 3s ref | High | Medium | 20+ (no Cantonese) | ✅ Yes |
+| **Chatterbox Multilingual** | Zero-shot TTS | 3s ref | High | Medium | 23 langs (no Cantonese) | ✅ Yes |
+| **F5-TTS** | Zero-shot TTS | 5-10s ref | Medium-High | Medium | en+zh trained, others generalize | ✅ Yes |
 | **GPT-SoVITS v2** | Fine-tune TTS | 1 min | High | Fast (RT) | zh / ja / en / ko / yue | ✅ Yes |
 | **GPT-SoVITS v4** | Fine-tune TTS | 1 min | Higher (48k) | Fast | same | ✅ Yes |
+| **Fish Speech / OpenAudio S1** | Fine-tune + zero-shot | 1 min | High | Fast | zh / en / ja | ✅ Yes |
 | **RVC v2** | Voice conversion | 10 min | High | Real-time | Any (timbre only) | ✅ Yes |
-| **CosyVoice 2/3** | Fine-tune TTS | 5 min | High | Medium | zh / en | ⚠️ Linux preferred (deepspeed) |
 | **XTTS v2** | Zero-shot TTS | 10s ref | Medium-high | Slow | 17 languages | ✅ Yes |
+| **VibeVoice** (Microsoft) | Zero-shot TTS, long-form | 3s ref | High | Slow | ja/ko/zh | ✅ Yes (research lic) |
 | **Bark** | Zero-shot TTS | None | Low-Medium | Very slow | Multilingual | ✅ Yes |
-| **Fish Speech** | Fine-tune TTS | 1 min | High | Fast | zh / en / ja | ✅ Yes |
 | **VoiceCraft** | Zero-shot TTS / edit | 3s ref | Medium | Medium | English-focused | ⚠️ Some bugs |
 
-"Fine-tune TTS" means you train on a target speaker before inference. "Zero-shot TTS" means you supply a short reference at inference time only. "Voice conversion" means you supply a separate TTS as input and the model warps the timbre to match the target.
+★ = this guide's default zero-shot pick.
+
+"Fine-tune TTS" means you train on a target speaker before inference.
+"Zero-shot TTS" means you supply a short reference at inference time only.
+"Voice conversion" means you supply a separate TTS as input and the model warps the timbre to match the target.
 
 ## When to use each
 
-### GPT-SoVITS — best default for character voice cloning
+### Qwen3-TTS — best default for zero-shot cloning (this guide's Path A)
+
+Released Jan 2026 by Alibaba. The "give me 3 seconds of a voice, get
+back a model that speaks any text in that voice" path that **actually
+works well across multiple languages** without retraining.
+
+Use it when:
+- You have **3–30 seconds** of clean reference audio of the voice.
+- You want **cross-lingual output**: a Japanese reference can speak
+  English / Chinese / Korean / 6 others natively.
+- You want **a single model** that handles all the languages you need.
+- You're on a **single consumer GPU** (≥4 GB VRAM at bf16).
+- You don't have time / data / GPU budget to train a custom LoRA.
+
+Skip it when:
+- You need **anime-character expressiveness** beyond what zero-shot
+  can do — fine-tune GPT-SoVITS v4 or IndexTTS-2.
+- You specifically need **Cantonese** — CosyVoice 3 has it natively.
+- Your reference clip is **<3 s** or contains background music / SFX
+  — clean it up first or it'll degrade speaker conditioning.
+
+Full walkthrough: [10-zero-shot-cloning.md](10-zero-shot-cloning.md).
+
+### Fun-CosyVoice3 — best for Chinese-dialect coverage
+
+Released Dec 2025 by Alibaba's FunAudio team. Strong cross-lingual
+quality, **first-class Cantonese support** via a `<|yue|>` dialect
+token (plus 17 other Chinese dialects). The CosyVoice 3 paper
+documents how they fixed the JA→ZH "kanji bleed" bug that plagued
+earlier models — they pre-convert JA text to katakana.
+
+Use it when:
+- You specifically need Cantonese, Hokkien, Sichuanese, or other
+  Chinese dialects.
+- You're willing to wrangle a more complex install (proprietary
+  `ttsfrd` text frontend isn't in the HF distribution — without it,
+  the model emits fluent audio with *unrelated* content).
+
+Skip it when:
+- The proprietary frontend issue blocks your install. Qwen3-TTS gets
+  you 80% of the same coverage with a clean install.
+
+### IndexTTS-2 — best anime / character expressiveness
+
+Released Sep 2025 by Bilibili. Disentangled emotion / speaker /
+duration control. Excellent on JA anime-style voices. Limited to
+zh/en/ja (no KO support).
+
+Use it when:
+- You're cloning an **anime character voice** specifically and need
+  more emotional range than the other zero-shot models.
+- ZH+EN+JA are the only languages you need.
+
+### Higgs Audio v2.5 — strong dark horse
+
+Boson AI. Apache-2.0. Unified text-audio LM. Vendor evals report
+high cross-lingual identity preservation. GRPO-aligned for
+EN/ZH/JA/KO. 1B distilled variant fits cleanly in 16 GB.
+
+Use it when:
+- You want a single model for EN+ZH+JA+KO and Qwen3-TTS quality on
+  your specific voice isn't quite enough — worth an A/B.
+
+### ChatterBox Multilingual — best language breadth among zero-shot
+
+Resemble AI. MIT licensed. 23 languages including ja/ko/zh. Has a
+`cfg_weight=0.0` knob specifically to reduce accent bleed in
+cross-lingual. Currently #1 in TTS-Arena's voice-cloning leaderboard.
+
+Use it when:
+- You need languages beyond Qwen3-TTS's 10 (esp. Vietnamese, Hindi,
+  etc.) AND can live without Cantonese.
+
+### GPT-SoVITS — best default for fine-tune character voice cloning
 
 Use it when:
 - You want **anime / game / streamer** style voices — the kind of expressive, stylized speech that needs the model to learn prosody patterns, not just timbre.

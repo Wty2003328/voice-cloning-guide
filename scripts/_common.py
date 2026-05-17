@@ -6,8 +6,14 @@ from pathlib import Path
 DEFAULT_GS_DIR = Path(os.environ.get("GS_DIR", "./GPT-SoVITS")).resolve()
 
 
-def setup(gs_dir: Path = DEFAULT_GS_DIR, version: str = "v2") -> Path:
-    """Add GPT-SoVITS to sys.path and set required env vars. Returns the resolved gs_dir."""
+def setup(gs_dir: Path = DEFAULT_GS_DIR, version: str = "v4") -> Path:
+    """Add GPT-SoVITS to sys.path and set required env vars. Returns the resolved gs_dir.
+
+    Default version is v4 — the canonical fine-tune path documented in
+    docs/models/gpt-sovits-v4.md. v2 is no longer supported by these
+    scripts (the v2-specific entries were removed when the guide
+    consolidated on v4 in 2026-05).
+    """
     gs_dir = Path(gs_dir).resolve()
     if not gs_dir.exists():
         raise FileNotFoundError(
@@ -23,31 +29,21 @@ def setup(gs_dir: Path = DEFAULT_GS_DIR, version: str = "v2") -> Path:
     return gs_dir
 
 
-def pretrained_paths(gs_dir: Path, version: str = "v2"):
-    """Pretrained model paths. version ∈ {'v2', 'v4'}.
-
-    v2 uses gsv-v2final-pretrained for SoVITS + s1bert25hz... for GPT.
-    v4 uses gsv-v4-pretrained/s2Gv4.pth + vocoder.pth + s1v3.ckpt for GPT.
+def pretrained_paths(gs_dir: Path, version: str = "v4"):
+    """Pretrained model paths for GPT-SoVITS v4 — the canonical version
+    documented in this guide. (v2 support removed 2026-05.)
     """
+    if version != "v4":
+        raise ValueError(
+            f"Unsupported version: {version!r}. This guide consolidated on "
+            f"v4 in 2026-05; v2 scripts were removed. Use version='v4'."
+        )
     base = Path(gs_dir) / "GPT_SoVITS" / "pretrained_models"
-    common = {
+    return {
         "cnhubert": str(base / "chinese-hubert-base"),
         "bert": str(base / "chinese-roberta-wwm-ext-large"),
         "s2_config": str(Path(gs_dir) / "GPT_SoVITS" / "configs" / "s2.json"),
+        "s2g": str(base / "gsv-v4-pretrained" / "s2Gv4.pth"),
+        "vocoder": str(base / "gsv-v4-pretrained" / "vocoder.pth"),
+        "s1": str(base / "s1v3.ckpt"),
     }
-    if version == "v2":
-        return {
-            **common,
-            "s2g": str(base / "gsv-v2final-pretrained" / "s2G2333k.pth"),
-            "s2d": str(base / "gsv-v2final-pretrained" / "s2D2333k.pth"),
-            "s1": str(base / "gsv-v2final-pretrained"
-                           / "s1bert25hz-5kh-longer-epoch=12-step=369668.ckpt"),
-        }
-    if version == "v4":
-        return {
-            **common,
-            "s2g": str(base / "gsv-v4-pretrained" / "s2Gv4.pth"),
-            "vocoder": str(base / "gsv-v4-pretrained" / "vocoder.pth"),
-            "s1": str(base / "s1v3.ckpt"),
-        }
-    raise ValueError(f"Unknown version: {version!r} (expected 'v2' or 'v4')")
