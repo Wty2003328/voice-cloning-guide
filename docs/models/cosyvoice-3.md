@@ -98,7 +98,7 @@ audio = cv.inference_zero_shot(
 )
 ```
 
-Same Asuna reference (`asuna_concat_diverse5.wav`) is reusable. The
+Same the target speaker reference (`target_concat_diverse5.wav`) is reusable. The
 speaker encoder is different from Qwen3-TTS / SBV2 / Higgs, so voice
 timbre will differ slightly across engines. Cross-engine voice
 consistency: ~85-90% (acceptable for typical use, blind A/B test

@@ -22,9 +22,9 @@ designed-in capability for "use the same speaker reference, generate
 speech in a different language."
 
 For our multi-engine architecture this matters because:
-- Asuna speaks JA via Style-Bert-VITS2 (fine-tuned per voice)
-- Asuna speaks ZH via CosyVoice 3 (zero-shot clone)
-- Asuna speaks EN via Higgs v2.5 (zero-shot clone)
+- The character speaks JA via Style-Bert-VITS2 (fine-tuned per voice)
+- The character speaks ZH via CosyVoice 3 (zero-shot clone)
+- The character speaks EN via Higgs v2.5 (zero-shot clone)
 
 Each engine has a different speaker encoder; voice consistency across
 languages would normally drift heavily. Higgs's cross-lingual design
@@ -84,7 +84,7 @@ import soundfile as sf
 model = HiggsAudioModel.from_pretrained("./higgs-audio-v2.5", device="cuda")
 audio = model.generate(
     text="Hello, this is a test.",
-    speaker_reference="asuna_reference.wav",  # JA reference works for EN output
+    speaker_reference="target_reference.wav",  # JA reference works for EN output
     language="en",
 )
 sf.write("out.wav", audio.cpu().numpy(), 24000)
@@ -138,7 +138,7 @@ continuous).
 ## Open questions
 
 1. **Actual RTF on Blackwell (RTX 5080)** — measure
-2. **Voice fidelity vs SBV2 / CosyVoice on same Asuna reference** —
+2. **Voice fidelity vs SBV2 / CosyVoice on the same reference clip** —
    blind A/B test required before shipping
 3. **Latency profile** — is it AR like Qwen3-TTS (subject to
    per-token costs) or non-AR like F5-TTS? Determines optimization

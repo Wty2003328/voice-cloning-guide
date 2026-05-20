@@ -220,7 +220,7 @@ casual/loanword/digit/acronym/multi-sentence/special-char/name/llm-output
 patterns across ja/en/zh. Pass criteria per case: jaccard ≥ 0.40 to
 the gold transcript + length-ratio in [0.5, 1.6].
 
-Production config (`reference=asuna_concat_diverse5`,
+Production config (`reference=concat_diverse5`,
 `temperature=0.4`, `top_p=0.85`, x_vector_only hybrid mode, no
 normalization) scores **32/33 (97%)**:
 

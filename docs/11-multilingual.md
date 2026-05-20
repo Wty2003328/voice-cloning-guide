@@ -41,7 +41,7 @@ pick the prompt mode based on `target_language == reference_language`.
 
 ## The 2026 quality bar (measured)
 
-With our 33-case eval ([Asuna voice reference, JA-source](10-zero-shot-cloning.md)):
+With our 33-case eval ([a single JA voice reference](10-zero-shot-cloning.md)):
 
 | Direction | Pass rate | Notes |
 |-----------|-----------|-------|

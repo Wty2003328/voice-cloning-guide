@@ -212,7 +212,7 @@ sidecar:
 ```
 companion-server
        ↓
-tts-sidecar:9890 (GPT-SoVITS v4 + Asuna LoRA loaded)
+tts-sidecar:9890 (GPT-SoVITS v4 + a per-character LoRA loaded)
 ```
 
 For multi-character or multi-language deployments, GPT-SoVITS sits
@@ -220,7 +220,7 @@ alongside other engines in the multi-engine router:
 
 ```
 tts-router:9890
-       ├─→ tts-asuna:9891  (GPT-SoVITS v4 + Asuna LoRA, JA)
+       ├─→ tts-target:9891  (GPT-SoVITS v4 + a per-character LoRA, JA)
        ├─→ tts-cosyvoice:9892  (CosyVoice 3, ZH)
        └─→ tts-higgs:9893     (Higgs Audio v2.5, EN)
 ```

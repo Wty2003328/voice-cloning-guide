@@ -1,157 +1,205 @@
 # Open-Source TTS Guide (2026)
 
-A vendor-neutral, hands-on comparison of open-source text-to-speech
-models for production use. Picks the right model per language, per
-license, per deployment constraint — and shows you how to actually run
-it.
+A hands-on guide to deploying production text-to-speech for a single
+character voice. Covers picking a model from the 2026 open-source
+landscape, running it under **vLLM-Omni in Docker**, fine-tuning the
+voice when you need character-level fidelity, and wiring it to any
+OpenAI-compatible client via one URL.
 
-This started as a GPT-SoVITS fine-tuning tutorial, expanded to cover
-Qwen3-TTS zero-shot cloning, and is now reorganized into a **broader
-TTS atlas** because no single model wins across all languages and use
-cases. The original recipes still live here (see [Path A](#path-a--zero-shot-cloning)
-and [Path B](#path-b--fine-tune-training)) — what's new is the
-landscape view and per-language model selection guidance.
+The guide pairs with a reference deploy repo (`vllm-omni-deploy`)
+containing the canonical `docker-compose.yml` + Dockerfiles, and an
+evaluation harness (`vllm-omni-tests`) for grading content fidelity
+across a battery of prompts.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+## TL;DR — the production pattern in 2026
+
+| Layer | Choice | Why |
+|---|---|---|
+| Runtime | **vLLM-Omni in Docker** | OpenAI-compatible API, model-agnostic, one bind URL, ~14 TTS architectures supported out of the box. |
+| Model (Japanese) | **OmniVoice** (`k2-fsa/OmniVoice`) | 36,914 hrs JA training, char-level Qwen3 tokenizer (no kanji-byte-fallback trap), FLEURS JA CER 5.96. Best of the vLLM-Omni-native set for JA. |
+| Voice fidelity | **Per-character SFT on ~10–20 min audio** | Lifts timbre clearly above zero-shot. ~8 minute training run on a 16 GB Blackwell GPU. |
+| Footprint | **~7 GB system VRAM** | Fits a 16 GB consumer GPU with a desktop OS sharing the device. |
+
+For non-Japanese: pick the model from
+[`docs/15-vllm-omni-model-selection.md`](docs/15-vllm-omni-model-selection.md);
+same deploy pattern.
+
+## Quickstart — production deploy in 10 minutes
+
+You need: Docker + NVIDIA Container Toolkit + WSL2 (on Windows) + a
+GPU with ≥ 8 GB VRAM.
+
+```bash
+# 1. Clone the deploy repo (docker-compose + reference clips).
+git clone https://github.com/<your-deploy-fork>/vllm-omni-deploy
+cd vllm-omni-deploy
+
+# 2. Bring up the default service (base OmniVoice — zero-shot from a
+#    reference clip you supply).
+docker compose up -d
+
+# 3. Verify.
+curl http://127.0.0.1:8000/v1/models
+#   → { ..., "data": [ { "id": "k2-fsa/OmniVoice", ... } ] }
+```
+
+Now any OpenAI-compatible client can synthesize:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d "$(cat <<'JSON'
+{
+  "model":     "k2-fsa/OmniVoice",
+  "input":     "今日もよろしくお願いします。",
+  "language":  "Japanese",
+  "ref_audio": "data:audio/wav;base64,<base64 of your reference clip>",
+  "ref_text":  "<transcript of the reference clip>"
+}
+JSON
+)" \
+  -o hello.wav
+```
+
+Full deploy walkthrough: [`docs/15-vllm-omni-docker.md`](docs/15-vllm-omni-docker.md).
+
+## Fine-tuning a character voice
+
+When the base model's zero-shot timbre isn't close enough to your
+target — common for distinctive character voices — fine-tune the
+LM head on your reference data. Recipe:
+[`docs/16-omnivoice-sft-recipe.md`](docs/16-omnivoice-sft-recipe.md).
+
+Per-step time on a 16 GB Blackwell GPU (single GPU):
+
+| Step | Wallclock | Output |
+|---|---|---|
+| Slice + ASR + transcript clean | ~30 min | ~100–200 clips + manifest |
+| Audio tokenization (Higgs codec) | ~30 s | WebDataset shards |
+| Full-FT 400 steps (bf16 SDPA) | **~8 min** | `checkpoint-400/` (~2.3 GB) |
+| Smoke-test against eval rig | ~5 min | jaccard ≥ 0.96 on 21 prompts |
+| **Total** | **~50 min** | Ship-ready character voice |
 
 ## What this guide answers
 
 | Question | Where to look |
 |---|---|
-| "Which model should I use for Japanese / Chinese / English?" | [docs/per-language/](docs/per-language/) |
-| "What are the trade-offs of model X?" | [docs/models/](docs/models/) |
-| "Why are there so many TTS models?" (AR vs non-AR, multilingual vs specialized, licenses) | [docs/00-landscape-2026.md](docs/00-landscape-2026.md) |
-| "How do I deploy multiple models behind one API?" | [docs/deployment/multi-engine.md](docs/deployment/multi-engine.md) |
-| "How do I clone a voice from a short reference?" | [docs/10-zero-shot-cloning.md](docs/10-zero-shot-cloning.md) (Qwen3-TTS recipe) |
-| "How do I fine-tune a custom voice model?" | [docs/models/gpt-sovits-v4.md](docs/models/gpt-sovits-v4.md) (GPT-SoVITS recipe) |
-| "How do I get sub-real-time inference?" | [docs/13-inference-optimization.md](docs/13-inference-optimization.md) |
+| "How do I deploy production TTS today?" | [`docs/15-vllm-omni-docker.md`](docs/15-vllm-omni-docker.md) |
+| "Which model fits my language + VRAM?" | [`docs/15-vllm-omni-model-selection.md`](docs/15-vllm-omni-model-selection.md), [`docs/per-language/`](docs/per-language/) |
+| "How do I fine-tune a custom character voice?" | [`docs/16-omnivoice-sft-recipe.md`](docs/16-omnivoice-sft-recipe.md) |
+| "Why not Qwen3-TTS / CosyVoice / Higgs / Fish-Speech?" | [`docs/15-vllm-omni-model-selection.md`](docs/15-vllm-omni-model-selection.md) — empirical eval with concrete failure modes |
+| "What's the wire contract my client should speak?" | [`docs/15-vllm-omni-docker.md`](docs/15-vllm-omni-docker.md) §"Sending a synth request" |
+| "What goes wrong on cross-lingual cloning?" | [`docs/14-cross-lingual-limits.md`](docs/14-cross-lingual-limits.md) |
+| "Can I still do GPT-SoVITS fine-tuning?" | [Legacy path](#legacy-path-gpt-sovits-fine-tune) — yes, in [`scripts/sovits-finetune/`](scripts/sovits-finetune/). |
 
-## TL;DR — recommendations as of 2026-05
+## Picking a different model
 
-| Language | Top pick | Why | License |
-|---|---|---|---|
-| **Japanese** | [**Style-Bert-VITS2 JP-Extra**](docs/models/style-bert-vits2.md) (fine-tuned per voice) | Rule-based pitch accent via pyopenjtalk+Unidic (not "learn-and-hope"); MOS 4.37 vs human 4.38 | AGPL-3.0 code (commercial OK via IPC sidecar) |
-| **Chinese** | [**CosyVoice 3 (Fun-0.5B-2512)**](docs/models/cosyvoice-3.md) | Apache, CER 0.81%, SIM 78% (beats human ref); 4× speedup with TRT-LLM (RTF 0.10 on 5080) | Apache-2.0 |
-| **English** | [**Higgs Audio v2.5 (1B)**](docs/models/higgs-audio.md) | Apache; only candidate with explicit cross-lingual voice clone (keeps voice ID across all 3 engines); 75.7% EmergentTTS-Eval emotions win vs gpt-4o-mini-tts | Apache-2.0 |
-| **Multilingual single-model** (all three in one) | [**Qwen3-TTS-12Hz-1.7B-Base**](docs/models/qwen3-tts.md) | Apache, true zero-shot, sub-real-time after kernel-opt (~6× over baseline), but JA pitch-accent imperfect and digit-runaway needs pre-normalization | Apache-2.0 |
-| **Best zero-shot voice clone** (3-30s reference → any voice) | Qwen3-TTS or Higgs Audio v2.5 | Both Apache, no training, multilingual | Apache-2.0 |
-| **Best per-character voice quality** (10+ min training audio) | GPT-SoVITS v4 with LoRA | MIT, learns speaker prosody not just timbre | MIT |
+vLLM-Omni supports a broad model family — VoxCPM2 (30 langs), CosyVoice3
+(multilingual), Qwen3-TTS, Voxtral-TTS, MossTTS-Nano, and others. They
+all plug into the same `docker compose --profile <name> up` flow with
+your client only changing one config field (the served model id).
 
-Architecture for multi-language deployments:
-**3 sidecars, lazy-load + LRU** (see [multi-engine.md](docs/deployment/multi-engine.md)).
-Full research report at [tts_lab/research_per_language_tts_2026.md](https://github.com/Wty2003328/gpt-sovits-voice-cloning-guide)
-(60+ cited sources, 9 candidates analyzed, 6 honorable mentions evaluated and excluded).
+| Profile | Model | When to pick |
+|---|---|---|
+| _default_ | `k2-fsa/OmniVoice` | Japanese voice cloning (best of the JA-trained models). |
+| `--profile cosy3` | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` | Chinese (CER 0.81% native ZH). JA mediocre per our eval. |
+| `--profile qwen` | `Qwen/Qwen3-TTS-12Hz-1.7B-Base` | Multilingual baseline (JA/ZH/EN), Apache-2.0. |
+| `--profile fish` | `fishaudio/s2-pro` | JA SOTA on paper (100k hrs) — currently blocked by upstream import bug. |
 
-## Why no single model wins
+See [`docs/15-vllm-omni-model-selection.md`](docs/15-vllm-omni-model-selection.md)
+for the full per-model eval and rationale.
 
-- **Training data is language-skewed.** English-centric models treat
-  JA/ZH as second-class even when nominally "multilingual." Native-JA
-  models (VOICEVOX, Style-Bert-VITS2) get prosody right; multilingual
-  models trip on pitch accent.
-- **Phonemization is language-specific.** Japanese needs MeCab +
-  pitch-accent dictionaries. Chinese needs tone marking. English needs
-  stress prediction. Generic char-level tokenization works for the
-  common case but fails on edge inputs (dates, numbers, abbreviations).
-- **License fragmentation.** SOTA quality often comes with CC-BY-NC
-  (IndexTTS 2.5, F5-TTS, MaskGCT, Spark-TTS). Commercial-OK weights are
-  rarer and usually 1-2 generations behind SOTA.
-- **Different architectures have different failure modes.**
-  Autoregressive models can loop / run away on out-of-distribution
-  input. Non-autoregressive (diffusion / flow-matching) models are
-  steadier but harder to fine-tune for new voices.
+## Per-language picks
 
-See [docs/00-landscape-2026.md](docs/00-landscape-2026.md) for the full
-architectural taxonomy and the trade-off matrices.
+The deep-dive pages survive any individual model pivot (they're
+architecture surveys, not snapshots):
 
-## Path A — Zero-shot cloning (give me a voice in 3 seconds)
+| Language | Top pick (2026-05) | Notes |
+|---|---|---|
+| **Japanese** | OmniVoice + per-character SFT | 36k-hr JA pretrain + ~20-min character SFT. |
+| **Chinese** | CosyVoice3 | Apache, CER 0.81% native ZH. |
+| **English** | Open — OmniVoice EN under-tested, Higgs Audio over the 16 GB budget. |
+| **Multilingual (1 model, all 3)** | OmniVoice for JA/ZH; VoxCPM2 if you need 30-lang reach. |
 
-The Qwen3-TTS quickstart. Single Apache-2.0 model handles JA/ZH/EN with
-acceptable quality. Best when you want to copy an existing voice with
-no training pipeline.
+Detailed pages: [`docs/per-language/japanese.md`](docs/per-language/japanese.md),
+[`docs/per-language/chinese.md`](docs/per-language/chinese.md),
+[`docs/per-language/english.md`](docs/per-language/english.md).
+
+## Documentation map
+
+### Production deploy (start here)
+- [**`docs/15-vllm-omni-docker.md`**](docs/15-vllm-omni-docker.md) — Docker compose walkthrough; the canonical deploy path.
+- [**`docs/15-vllm-omni-model-selection.md`**](docs/15-vllm-omni-model-selection.md) — Which vLLM-Omni-native model to pick; full empirical eval.
+- [**`docs/16-omnivoice-sft-recipe.md`**](docs/16-omnivoice-sft-recipe.md) — Fine-tune OmniVoice on ~20 min of your character voice.
+- [`docs/14-cross-lingual-limits.md`](docs/14-cross-lingual-limits.md) — Empirical cross-lingual failure modes (JA→EN accent leak etc.).
+
+### Per-language picks
+- [`docs/per-language/japanese.md`](docs/per-language/japanese.md)
+- [`docs/per-language/chinese.md`](docs/per-language/chinese.md)
+- [`docs/per-language/english.md`](docs/per-language/english.md)
+- [`docs/per-language/multilingual.md`](docs/per-language/multilingual.md)
+
+### Model deep dives
+- [`docs/models/`](docs/models/) — per-model deep dives (Style-Bert-VITS2, CosyVoice3, Higgs, Qwen3-TTS, GPT-SoVITS v4).
+
+### Reference
+- [`docs/00-landscape-2026.md`](docs/00-landscape-2026.md) — Architecture taxonomy + license matrix.
+- [`docs/01-theory.md`](docs/01-theory.md) — TTS theory (transfer learning, two-stage design).
+- [`docs/02-comparison.md`](docs/02-comparison.md) — Cross-model decision tree.
+- [`docs/07-windows-guide.md`](docs/07-windows-guide.md) — Windows / Blackwell / cu128 gotchas.
+- [`docs/13-inference-optimization.md`](docs/13-inference-optimization.md) — Kernel-level inference optimization (pre-vLLM-Omni era; tactics still apply).
+
+## Legacy path — GPT-SoVITS fine-tune
+
+The pre-vLLM-Omni recipe. Still works; kept for users who specifically
+want LoRA-on-GPT-SoVITS-v4 (e.g. you already have a v4 weights set, or
+you want the SoVITS-specific dataset pipeline).
 
 ```bash
-pip install -U qwen-tts huggingface_hub soundfile
-huggingface-cli download Qwen/Qwen3-TTS-12Hz-1.7B-Base --local-dir ./qwen3-tts-1.7b-base
-python scripts/zero_shot_clone.py \
-    --model-dir ./qwen3-tts-1.7b-base \
-    --reference my_voice.wav \
-    --reference-text "Hello, this is my reference recording." \
-    --text "I can now speak any text you want." \
-    --language English \
-    --out cloned.wav
-```
-
-Full tutorial: [docs/10-zero-shot-cloning.md](docs/10-zero-shot-cloning.md).
-
-## Path B — Fine-tune training (best per-character quality)
-
-The GPT-SoVITS v4 LoRA pipeline. Needs ~10-20 minutes of training audio
-+ ~30-60 min training on RTX 5080. Highest quality for a specific
-character voice.
-
-```bash
-python scripts/demucs_isolate.py --input video_audio.wav --output speaker_vocals.wav
-cd scripts
-python 01_slice_audio.py      --vocals ../speaker_vocals.wav --exp my_speaker
+cd scripts/sovits-finetune/
+python demucs_isolate.py      --input video_audio.wav --output speaker_vocals.wav
+python 01_slice_audio.py      --vocals ../../speaker_vocals.wav --exp my_speaker
 python 02_asr_transcribe.py   --exp my_speaker --lang ja
 python 03_extract_features.py --exp my_speaker
 python 04_extract_semantic.py --exp my_speaker
 python 05_train_sovits_v4.py  --exp my_speaker --epochs 20 --lora-rank 32
 python 06_train_gpt.py        --exp my_speaker --epochs 15 --pretrained-version v4
-python 07_inference_v4.py     --exp my_speaker --lang ja --text "こんにちは！" \
-    --ref-wav ../GPT-SoVITS/logs/my_speaker/0_sliced/0003.wav \
-    --ref-text "ここは私に任せて私を選んでくれる" --ref-lang ja \
-    --out hello.wav
+python 07_inference_v4.py     --exp my_speaker --lang ja --text "..." ...
 ```
 
-Full tutorial: [docs/models/gpt-sovits-v4.md](docs/models/gpt-sovits-v4.md)
-(consolidated deep dive — recipe + architecture + extending) plus the
-training scripts in [`scripts/`](scripts/).
-
-## Documentation map
-
-### Landscape + decision-making
-- [docs/00-landscape-2026.md](docs/00-landscape-2026.md) — TTS architectures, license decision matrix, why so many models
-- [docs/per-language/](docs/per-language/) — model recommendations per language
-- [docs/models/](docs/models/) — deep dive per model (pros/cons, deployment, quality)
-
-### Practical recipes
-- [docs/10-zero-shot-cloning.md](docs/10-zero-shot-cloning.md) — Qwen3-TTS quickstart and tuning
-- [docs/11-multilingual.md](docs/11-multilingual.md) — cross-lingual cloning (one model, many languages)
-- [docs/models/gpt-sovits-v4.md](docs/models/gpt-sovits-v4.md) — GPT-SoVITS v4 LoRA fine-tune (consolidated)
-- [docs/12-integration.md](docs/12-integration.md) — wrapping any TTS as a Provider-Spec sidecar
-- [docs/07-windows-guide.md](docs/07-windows-guide.md) — Windows-specific quirks (CUDA, build flags, audio I/O)
-
-### Theory + comparison
-- [docs/01-theory.md](docs/01-theory.md) — TTS theory (transfer learning, two-stage design, info bottleneck) — universal, framed via GPT-SoVITS
-- [docs/02-comparison.md](docs/02-comparison.md) — cross-model decision tree ("when to use which") for 14+ models
-
-### Performance + optimization
-- [docs/13-inference-optimization.md](docs/13-inference-optimization.md) — kernel-level optimization (T1+T2+T3+T4-prealloc on Qwen3-TTS, 5.98× over baseline; tactics generalize to most AR TTS)
-- [docs/deployment/multi-engine.md](docs/deployment/multi-engine.md) — multi-model sidecar router architecture
+Full tutorial: [`docs/models/gpt-sovits-v4.md`](docs/models/gpt-sovits-v4.md)
++ [`scripts/sovits-finetune/README.md`](scripts/sovits-finetune/README.md).
+For new projects: **prefer the OmniVoice SFT path** above — same data
+requirement (~20 min), shorter wallclock, drops straight into the
+production Docker compose.
 
 ## Validated on
 
-| Track | Hardware | OS | GPU mem | Model versions tested |
+| Track | Hardware | OS | GPU mem | Versions |
 |---|---|---|---|---|
-| Zero-shot (Qwen3-TTS) | RTX 5080 (Blackwell) | Windows 11 | 16 GB | Qwen3-TTS-12Hz-1.7B-Base, qwen-tts 0.1.x, torch 2.11+cu128 |
-| Fine-tune (GPT-SoVITS) | RTX 5080 | Windows 11 | 16 GB | GPT-SoVITS v4 (LoRA), pretrained s2Gv4 |
+| OmniVoice base + SFT | RTX 5080 (Blackwell, sm_120) | Windows 11 + WSL2 + Docker Desktop | 16 GB | vllm/vllm-omni:v0.20.0, torch 2.11+cu130, k2-fsa/OmniVoice |
+| GPT-SoVITS v4 (legacy) | RTX 5080 | Windows 11 native | 16 GB | GPT-SoVITS v4 (LoRA), pretrained s2Gv4 |
 
-## How to contribute a model page
+## How to contribute
 
-If you've deployed a TTS model not yet covered:
-1. Copy [docs/models/_template.md](docs/models/_template.md) (coming)
-2. Fill in: license, quality benchmarks, voice-clone capability,
-   phonemization, VRAM, RTF, Windows-deploy difficulty, known failure
-   modes
-3. Open a PR
+1. **A new model page**: copy any existing `docs/models/<model>.md` as a
+   template, fill in license + benchmarks + VRAM + RTF + failure
+   modes, open a PR.
+2. **A new language pick**: add `docs/per-language/<lang>.md`, link
+   from the README.
+3. **A new vLLM-Omni profile**: add a service to the `vllm-omni-deploy`
+   docker-compose, and append an entry to the
+   [picking-a-model](docs/15-vllm-omni-model-selection.md) table here.
 
 ## Project history
 
-This repo started as `gpt-sovits-voice-cloning-guide` — a hands-on
-tutorial for fine-tuning GPT-SoVITS v4. As the open-source TTS
-landscape diversified (zero-shot via Qwen3-TTS, native-JA via
-Style-Bert-VITS2, fast-EN via Kokoro, etc.), the original mono-model
-framing stopped serving readers who needed to pick AMONG models. The
-2026 reorg keeps every original chapter as a hands-on recipe but
-reframes the entry point as a comparison-first resource.
+- **2024–2025**: started as a GPT-SoVITS v4 fine-tuning tutorial.
+- **2026-Q1**: expanded with Qwen3-TTS zero-shot + per-language picks;
+  production stack was per-engine Python sidecars (Style-Bert-VITS2 for
+  JA, Chatterbox-MTL for ZH/EN).
+- **2026-05**: pivoted to **vLLM-Omni Docker**. Evaluated every
+  vLLM-Omni-native model on a 21-prompt JA battery, picked OmniVoice
+  as the production base, documented the SFT recipe. This README leads
+  with the new flow; legacy paths kept where still useful.

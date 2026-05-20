@@ -201,17 +201,17 @@ The user picks which engine serves each language. Config:
 [engines.ja]
 binary = "style_bert_vits2_sidecar"
 port = 9891
-voice = "asuna"
+voice = "target"
 
 [engines.zh]
 binary = "cosyvoice3_sidecar"
 port = 9892
-voice = "asuna"
+voice = "target"
 
 [engines.en]
 binary = "kokoro_sidecar"
 port = 9893
-voice = "asuna"
+voice = "target"
 ```
 
 A `tts-router-supervisor` starts the engines defined here, monitors
@@ -219,20 +219,20 @@ them, restarts on crash.
 
 ## Voice consistency across languages
 
-**The hard problem:** the user wants Asuna's voice in JA AND ZH AND
+**The hard problem:** the user wants the same character voice in JA AND ZH AND
 EN. Different engines have different speaker encoders — the SAME
 reference audio produces different embeddings in each model.
 
 Options:
 
-1. **One reference clip per (engine, language)** — register `asuna_ja`
-   in the JA engine, `asuna_zh` in the ZH engine, etc. Each engine
-   independently produces its best approximation of Asuna. Voice
+1. **One reference clip per (engine, language)** — register e.g. `mychar_ja`
+   in the JA engine, `mychar_zh` in the ZH engine, etc. Each engine
+   independently produces its best approximation of the character. Voice
    consistency is imperfect but acceptable; the user already accepts
    some drift in cross-lingual cloning.
 
 2. **Train per-engine voice models from the SAME clip pool** — for
-   per-voice-trained engines (Style-Bert-VITS2), train a custom Asuna
+   per-voice-trained engines (Style-Bert-VITS2), train a custom
    from the diverse5 clips in each engine separately. Higher consistency
    within each engine but engines still differ from each other.
 

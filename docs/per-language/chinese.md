@@ -57,7 +57,7 @@ optionally migrate to TRT-LLM for production speed.
 
 ## Voice cloning
 
-Zero-shot — same Asuna reference clip (`asuna_concat_diverse5.wav`)
+Zero-shot — the same reference clip clip (`target_concat_diverse5.wav`)
 can be reused. CosyVoice 3's speaker encoder produces a different
 embedding than Qwen3-TTS / SBV2 / Higgs, so the voice timbre will
 differ slightly across engines. Expected ~10-15% drift; blind A/B

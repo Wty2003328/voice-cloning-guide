@@ -68,9 +68,9 @@ The result is a representation that's *just rich enough* to capture what GPT nee
 
 Putting it together, when you run [05_train_sovits.py](../scripts/05_train_sovits.py) and [06_train_gpt.py](../scripts/06_train_gpt.py) on your 4-15 minutes of data:
 
-1. **GPT fine-tuning** adjusts the next-token distribution so that, given Asuna-like text, the model emits Asuna-like semantic token sequences. The semantic tokens encode prosody (timing, emphasis, pitch contour) — so what GPT learns is *Asuna's prosodic style*.
+1. **GPT fine-tuning** adjusts the next-token distribution so that, given text in the target speaker's style, the model emits semantic-token sequences that match her prosody. The semantic tokens encode prosody (timing, emphasis, pitch contour) — so what GPT learns is *the target speaker's prosodic style*.
 
-2. **SoVITS fine-tuning** adjusts the decoder so that, given semantic tokens + a reference Asuna clip, it produces audio with Asuna's timbre. Most of this happens in the posterior encoder and the lower flow layers; the upstream text encoder is updated with a *much lower* learning rate (10× smaller in our default config) to preserve multi-lingual phoneme handling.
+2. **SoVITS fine-tuning** adjusts the decoder so that, given semantic tokens + a reference clip of the target speaker, it produces audio with that speaker's timbre. Most of this happens in the posterior encoder and the lower flow layers; the upstream text encoder is updated with a *much lower* learning rate (10× smaller in our default config) to preserve multi-lingual phoneme handling.
 
 Neither stage learns "to speak Japanese" or "to produce intelligible speech" — those abilities are inherited from pretraining and held constant.
 

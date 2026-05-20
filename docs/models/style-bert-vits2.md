@@ -12,14 +12,14 @@
 | **VRAM** | ~2 GB (fits comfortably alongside other engines) |
 | **RTF (RTX 5080)** | ~0.15-0.25 (very fast — small model + non-AR architecture) |
 | **Best-in-class for** | Japanese chat / character voices where pitch accent matters |
-| **Status in this repo** | 🚧 Prototype planned (Asuna voice fine-tune) |
+| **Status in this repo** | 🚧 Prototype planned (per-character voice fine-tune) |
 
 ## When to pick Style-Bert-VITS2
 
 - You need the BEST Japanese voice quality possible from open-source
   models
 - You have 10-30 minutes of training audio for your target voice (or
-  the 168-clip Asuna pool already in this workspace)
+  a ~150-200 clip pool of your target voice already in this workspace)
 - You can spend 1-2 days training per voice (one-time per character)
 - AGPL-3.0 commercial use is acceptable via IPC sidecar isolation
   (your closed-source product talks to the sidecar over HTTP/IPC; the
@@ -78,13 +78,13 @@ python -m style_bert_vits2.download --model jp-extra
 ```
 
 Zero-shot inference uses one of the pre-trained canonical voices. To
-clone a custom voice (Asuna), proceed to the fine-tune path.
+clone a custom voice (the target speaker), proceed to the fine-tune path.
 
 ## Fine-tune recipe for a custom voice
 
 1. **Audio pool.** Need 10-30 min of clean audio in the target voice.
-   For Asuna: use the existing 168 clips in
-   `GPT-SoVITS/logs/asuna_combined/0_sliced/` (already validated for
+   Use a ~150 clip dataset under
+   `GPT-SoVITS/logs/target_combined/0_sliced/` (already validated for
    GPT-SoVITS training; same data quality applies).
 
 2. **Transcribe + normalize.** Use the existing
@@ -94,8 +94,8 @@ clone a custom voice (Asuna), proceed to the fine-tune path.
 3. **Train.**
    ```bash
    python train_ms.py \
-     --config configs/jp_extra/asuna.json \
-     --model asuna-jp \
+     --config configs/jp_extra/target.json \
+     --model target-jp \
      --num_workers 4
    ```
    ~1-2 days on RTX 5080 for converged quality. Earlier checkpoints
@@ -103,9 +103,9 @@ clone a custom voice (Asuna), proceed to the fine-tune path.
 
 4. **Inference test.**
    ```bash
-   python infer.py --model asuna-jp \
+   python infer.py --model target-jp \
      --text "今日はとてもいい天気ですね。" \
-     --out asuna_out.wav
+     --out target_out.wav
    ```
 
 5. **Wrap as sidecar.** Implement the
@@ -120,7 +120,7 @@ clone a custom voice (Asuna), proceed to the fine-tune path.
 - **Non-autoregressive** — no runaway loops, no stochastic EOS
 - **Active JA community** (litagin02 + Aivisspeech fork)
 - **Per-voice fine-tune works on the same data** you'd use for
-  GPT-SoVITS (the 168-clip Asuna pool is reusable)
+  GPT-SoVITS (a ~150-200 clip pool of your target voice is reusable)
 
 ## Cons
 
@@ -158,7 +158,7 @@ JA-only engine in a multi-sidecar router architecture:
 companion-server
        ↓
 tts-router:9890
-       ├─→ tts-ja:9891   (Style-Bert-VITS2 fine-tuned on Asuna)
+       ├─→ tts-ja:9891   (Style-Bert-VITS2 fine-tuned on the target speaker)
        ├─→ tts-zh:9892   (CosyVoice 3)
        └─→ tts-en:9893   (Higgs Audio v2.5)
 ```

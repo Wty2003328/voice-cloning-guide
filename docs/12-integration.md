@@ -27,7 +27,7 @@ Body schema for `/v1/audio/speech`:
 {
   "model":           "qwen3-tts-1.7b",       // optional, engine identifier
   "input":           "Hello, world.",
-  "voice":           "asuna",                // pre-registered voice_id
+  "voice":           "target",                // pre-registered voice_id
   "response_format": "wav",                  // wav | mp3 | opus | pcm
   "speed":           1.0,
   "stream_format":   "audio",                // or "sse" for chunked
@@ -74,10 +74,10 @@ The `voices.toml` registers voices at startup:
 
 ```toml
 [[voice]]
-id              = "asuna"
-name            = "Asuna"
+id              = "target"
+name            = "the target speaker"
 language        = "ja"
-reference_audio = "/path/to/asuna_concat_diverse5.wav"
+reference_audio = "/path/to/target_concat_diverse5.wav"
 reference_text  = "今日はあの…"
 ```
 

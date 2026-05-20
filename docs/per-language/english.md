@@ -20,7 +20,7 @@ The hard parts:
 
 | Model | License | Voice clone | EN quality | RTF (RTX 5080) | Notes |
 |---|---|---|---|---|---|
-| **Higgs Audio v2.5 (1B)** ✅ | Apache-2.0 | Zero-shot 3-30s **with explicit cross-lingual support** | 75.7% win vs gpt-4o-mini-tts on EmergentTTS-Eval Emotions | ~0.5 | Only pick with explicit cross-lingual voice clone (matters for using same Asuna ref across all 3 engines) |
+| **Higgs Audio v2.5 (1B)** ✅ | Apache-2.0 | Zero-shot 3-30s **with explicit cross-lingual support** | 75.7% win vs gpt-4o-mini-tts on EmergentTTS-Eval Emotions | ~0.5 | Only pick with explicit cross-lingual voice clone (matters for using one shared reference clip across all 3 engines) |
 | Kokoro-82M | Apache-2.0 | Limited (canonical voices) | Good | ~0.05 (extremely fast) | Best for low-latency EN-only; limited voice variety |
 | CosyVoice 3 | Apache-2.0 | Zero-shot | Strong EN | ~0.5 (or 0.10 with TRT-LLM) | Same model serves ZH well too — share-the-engine option |
 | XTTS-v2 (Coqui) | CPML weights | Zero-shot | Solid older baseline | ~0.8 | Coqui shutdown Jan 2024 — paid tier defunct, legal gray |
@@ -36,7 +36,7 @@ The hard parts:
 - Apache-2.0 (commercial OK)
 - **Only candidate with explicit cross-lingual voice clone** — same
   speaker_embedding maintains voice identity across JA / EN / ZH.
-  This matters because the multi-engine architecture wants Asuna to
+  This matters because the multi-engine architecture wants the character to
   sound consistent across languages; most other models' speaker
   encoders are language-locked.
 - 75.7% emotion-aware quality win vs gpt-4o-mini-tts on EmergentTTS-Eval
