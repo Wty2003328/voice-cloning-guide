@@ -1,173 +1,155 @@
-# 11 — Multilingual & Cross-Lingual Voice Cloning
+# 11 — Multilingual: One Server, Many Languages
 
-Modern zero-shot models can take a voice reference in one language and
-synthesize speech in *other* languages — same voice, different
-language. This doc covers how it works, the practical limits, and how
-to get good results.
+You need a TTS server that speaks Japanese, Chinese, and English (and
+maybe more). There are two ways to do it: **one multilingual model** or
+**a specialist per language**. Both ride the same vLLM-Omni Docker
+deploy — what changes is the profile flag and which model loads.
 
-## The problem
+## Strategy 1 — one multilingual model
 
-You have a reference clip of a Japanese voice actor. You want them to
-say "Hello, how are you?" in English with their Japanese-voice timbre.
-Or read a Chinese sentence. Or a Korean greeting. Without retraining.
+A single container, one set of weights, switch language per request via
+the `language` field. Lowest VRAM (one model loaded), simplest
+operationally, but the per-language quality ceiling is the model's
+weakest language.
 
-This is **cross-lingual zero-shot voice cloning**. It's hard because:
+### Candidate multilingual models
 
-- The model needs to disentangle **speaker identity** (timbre,
-  pitch range, vocal tract) from **language phonotactics** (which
-  phonemes the speaker is actually producing).
-- The reference clip is full of Japanese phonemes — the model has to
-  borrow the speaker's *acoustic style* without dragging those
-  phonemes into the target.
+| Model | Profile | Languages | Notes |
+|---|---|---|---|
+| **VoxCPM2** (`openbmb/VoxCPM2`) | `vllm serve openbmb/VoxCPM2` | 30 languages including JA / ZH / EN / KO | Apache-2.0; ~8 GB VRAM. Widest reach. Hands-on reviews flag JA proper-noun / mixed-number cases as inconsistent. |
+| **CosyVoice3** (`FunAudioLLM/Fun-CosyVoice3-0.5B-2512`) | `--profile cosy3` | 9 base langs + 18 Chinese dialects (incl. Cantonese) | Apache-2.0; CER 0.81% on native ZH. JA degrades on raw kanji (trained on kana-converted text). |
+| **Qwen3-TTS** (`Qwen/Qwen3-TTS-12Hz-1.7B-Base`) | `--profile qwen` | JA / ZH / EN / KO + DE / FR / RU / PT / ES / IT | Apache-2.0. Multilingual baseline. Generic — beaten on JA by OmniVoice and on ZH by CosyVoice3. |
+| **OmniVoice** (`k2-fsa/OmniVoice`) | _default_ | Multilingual but strongest on Japanese | Apache-2.0; ~7 GB system VRAM. EN / ZH are undertested in the public eval. |
 
-## How Qwen3-TTS handles it
+### Switching language per call
 
-Qwen3-TTS uses a **discrete multi-codebook LM** architecture. The
-speaker embedding is computed by a separate encoder and is mostly
-language-agnostic — it captures the acoustic properties of the voice
-without locking to the specific phonemes in the reference.
+Same model, just change the `language` field:
 
-In `create_voice_clone_prompt(...)`:
+```bash
+# Japanese
+curl -X POST http://127.0.0.1:8000/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+    "input": "こんにちは、世界。",
+    "language": "Japanese",
+    "ref_audio": "data:audio/wav;base64,<...>",
+    "ref_text": "<JA transcript of the ref>"
+  }' \
+  -o ja.wav
 
-- **`x_vector_only_mode=True`** uses *only* the speaker embedding.
-  Prompt-text-paired features (which carry the reference language's
-  phonotactics) are dropped. This is the right mode for cross-lingual.
-- **`x_vector_only_mode=False`** uses both speaker embedding AND
-  paired features. Better voice fidelity for same-language synthesis;
-  causes phoneme bleed for cross-lingual.
-
-We call this **hybrid speaker conditioning** in our wrapper code —
-pick the prompt mode based on `target_language == reference_language`.
-
-## The 2026 quality bar (measured)
-
-With our 33-case eval ([a single JA voice reference](10-zero-shot-cloning.md)):
-
-| Direction | Pass rate | Notes |
-|-----------|-----------|-------|
-| **JA → JA** | 13/13 (100%) | Same language, fully natural — production ready |
-| **JA → EN** | 10/10 (100%) | Cross-lingual works — voice identity holds, mild accent expected |
-| **JA → ZH** | 9/10 (90%) | The 1 fail is Whisper homophone artifact, not TTS — effectively 100% |
-| **JA → KO** | ~80% (informal) | Works but de-prioritized — phonotactic gap is wider |
-| **JA → YUE** (Cantonese) | Not supported | Qwen3-TTS-Base doesn't cover Cantonese; CosyVoice 3 does |
-
-## Languages supported
-
-Qwen3-TTS-12Hz-1.7B-Base natively covers 10 languages:
-
-| Code | Name | Cross-lingual quality vs JA ref |
-|------|------|-------------------------------|
-| `ja` | Japanese | Native (same as ref) |
-| `en` | English | Excellent |
-| `zh` | Chinese (Mandarin) | Excellent |
-| `ko` | Korean | Good |
-| `de` | German | Untested |
-| `fr` | French | Untested |
-| `ru` | Russian | Untested |
-| `pt` | Portuguese | Untested |
-| `es` | Spanish | Untested |
-| `it` | Italian | Untested |
-
-Pass language names (not codes) to the API: `"Japanese"`, `"English"`,
-etc. — see `LANG_HINT` in `qwen3_engine.py` for the map.
-
-**Not in Qwen3-TTS:** Cantonese, Vietnamese, Thai, Arabic, Hindi.
-For Cantonese specifically, [Fun-CosyVoice3-0.5B-2512](https://huggingface.co/FunAudioLLM/Fun-CosyVoice3-0.5B-2512)
-has first-class support (and a `<|yue|>` dialect token) but its
-proprietary `ttsfrd` text frontend is needed and not in the HF
-distribution.
-
-## Cross-lingual gotchas
-
-### Latin loanwords in JA targets
-
-In English context, you'd say "iPhone" — but in Japanese context, the
-canonical pronunciation is "アイフォン" (ai-fon). Qwen3-TTS handles this
-correctly *if you give it the raw Latin "iPhone" in JA text*. Do
-**not** pre-convert to katakana manually — the LLM's text encoder
-knows the right katakana already and any manual conversion will lose
-accuracy.
-
-### Chinese reading of English letters
-
-In Chinese context, native speakers code-switch into English for
-acronyms. "请设置API密钥" → "請設置 A-P-I 密鑰" (reading API as English
-letters, not as 艾-皮-埃). Qwen3-TTS reproduces this correctly — again,
-don't pre-normalize.
-
-### Japanese kanji bleed in cross-lingual
-
-Older models (CosyVoice 2, GPT-SoVITS) had a documented "kanji bleed"
-bug: when given a JA reference and a ZH target containing kanji that
-exist in both writing systems, the model would emit JA-tinged
-Mandarin. CosyVoice 3 fixed this by pre-converting JA text to
-katakana. Qwen3-TTS sidesteps it via the LLM text encoder — no manual
-fix needed.
-
-### Tonal accuracy for ZH
-
-Chinese is tonal — wrong tone changes the meaning. Cross-lingual
-Mandarin from a JA-voice reference is usually tonally correct in
-Qwen3-TTS but expect mild pitch-contour drift on heavily emphasized
-syllables. For broadcast-quality Mandarin you'd want a Mandarin-native
-reference, but for chatbot-grade output the JA-reference path is fine.
-
-## Practical recipe
-
-```python
-# Pseudocode for a multi-language voice
-prompt_paired   = model.create_voice_clone_prompt(ref_audio=..., ref_text=...,
-                                                   x_vector_only_mode=False)
-prompt_xvec     = model.create_voice_clone_prompt(ref_audio=..., ref_text=...,
-                                                   x_vector_only_mode=True)
-
-REFERENCE_LANG = "ja"  # the language of your reference clip
-
-def synthesize(text, target_lang):
-    prompt = prompt_paired if target_lang == REFERENCE_LANG else prompt_xvec
-    return model.generate_voice_clone(
-        text=text, language=LANG_MAP[target_lang],
-        voice_clone_prompt=prompt,
-        temperature=0.4, top_p=0.85, max_new_tokens=240,
-    )
+# Same ref clip, English target
+curl -X POST http://127.0.0.1:8000/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+    "input": "Hello, world.",
+    "language": "English",
+    "ref_audio": "data:audio/wav;base64,<...>",
+    "ref_text": "<JA transcript of the ref>"
+  }' \
+  -o en.wav
 ```
 
-This is the production code in our companion wrapper
-(`qwen3_engine.py`). Same speaker, four languages, one model.
+`language` is the English name (`"Japanese"`, `"English"`, `"Chinese"`,
+`"Korean"`, `"German"`, ...), not BCP-47. Wrap a small code-to-name
+table in your client if you prefer to configure with codes.
 
-## When to NOT use cross-lingual
+## Strategy 2 — per-language specialist services
 
-- **Broadcast / professional audiobook quality** in a non-reference
-  language. Train on native speakers of that language instead.
-- **Languages outside Qwen3-TTS's 10** — Cantonese, Vietnamese, etc.
-  Either accept English-mode fallback or pick a model that natively
-  supports your target.
-- **Tonally-strict use cases** like teaching Mandarin pronunciation —
-  use a native Mandarin reference, not a cross-lingual JA-reference.
+A separate compose service per language, each loading the model that
+performs best for it. Higher VRAM and more services to operate, but
+each language gets its quality ceiling.
 
-For most chat / companion / VTuber use cases, cross-lingual is good
-enough that listeners won't notice unless they're specifically
-listening for accent.
+Recommended specialist per language (see the per-language pages for
+detail):
 
-## What the field looked like before Qwen3-TTS (Jan 2026)
+| Language | Specialist | Profile |
+|---|---|---|
+| Japanese | OmniVoice (+ per-character SFT if needed) | _default_ |
+| Chinese | CosyVoice3 | `--profile cosy3` |
+| English | Open — see [per-language/english.md](per-language/english.md) | `--profile qwen` or default |
+| Multilingual fallback | Qwen3-TTS or VoxCPM2 | `--profile qwen` |
 
-If you're reading this and a newer model has come out, the comparison
-table in [02-comparison.md](02-comparison.md) tracks the landscape.
-Pre-Qwen3-TTS, the best cross-lingual options were:
+Each specialist is its own compose service on its own port; a thin
+language router in front dispatches requests by the `language` field.
+Example compose fragment:
 
-- **CosyVoice 3** (Dec 2025) — fixed JA→ZH kanji bleed, added
-  Cantonese dialect token. Local install is finicky due to proprietary
-  text frontend.
-- **IndexTTS-2** (Sep 2025) — best anime expressiveness, but
-  ZH/EN/JA only (no KO).
-- **Higgs Audio v2.5** — strong cross-lingual identity preservation;
-  no Cantonese.
+```yaml
+services:
+  omnivoice-ja:
+    image: vllm/vllm-omni:v0.20.0
+    ports: ["8001:8000"]
+    command: vllm serve k2-fsa/OmniVoice --omni --host 0.0.0.0 --port 8000 ...
 
-We picked Qwen3-TTS for its install-cleanness, all-3-priorities
-(ja/en/zh) at production quality, and native LLM text handling.
+  cosyvoice3-zh:
+    image: vllm-omni-cosy-ja:v0.20.0
+    profiles: ["cosy3"]
+    ports: ["8002:8000"]
+    command: vllm serve FunAudioLLM/Fun-CosyVoice3-0.5B-2512 --omni --host 0.0.0.0 --port 8000 ...
+
+  qwen3-tts-multi:
+    image: vllm/vllm-omni:v0.20.0
+    profiles: ["qwen"]
+    ports: ["8003:8000"]
+    command: vllm serve Qwen/Qwen3-TTS-12Hz-1.7B-Base --omni --host 0.0.0.0 --port 8000 ...
+```
+
+The router code is application-specific (a 20-line FastAPI handler that
+forwards by `language`). Keeping the upstream contract identical — same
+OpenAI-compatible body, just different upstream URL — keeps client code
+unchanged.
+
+## Cross-lingual cloning: one ref clip, another language
+
+A separate question from "which model": can a single Japanese reference
+clip produce intelligible English / Chinese in the cloned voice?
+
+Short answer: **content holds, accent leaks.** Modern multilingual
+codebook architectures (Chatterbox-MTL v2, CosyVoice3, Qwen3-TTS)
+preserve the target text faithfully when cross-lingual cloning. The
+remaining cost is timbre / accent: a JA reference cloning EN produces
+Japanese-accented English, especially on short utterances.
+
+Full empirical measurements (six engine × direction combinations on a
+12-prompt battery, char-jaccard + Whisper auto-language detection) live
+in [ch. 14 — Cross-lingual limits](14-cross-lingual-limits.md).
+
+Recommendation: if accent naturalness matters, use a **native
+target-language reference** rather than a cross-lingual JA reference.
+Cross-lingual cloning is only the right call when consistent timbre
+across languages is more important than accent (one fictional character
+speaking many languages, accent as a feature).
+
+## Choosing between Strategies 1 and 2
+
+| Priority | Pick |
+|---|---|
+| Lowest VRAM, lowest ops overhead | Strategy 1 — VoxCPM2 or Qwen3-TTS. |
+| Highest per-language quality | Strategy 2 — OmniVoice JA + CosyVoice3 ZH + EN specialist. |
+| One voice ID across languages (cross-lingual cloning) | Strategy 1 with a model that has a language-agnostic speaker encoder. |
+| Mixed-language sentences ("APIを設定") | Strategy 1 — multilingual models handle in-sentence code-switching natively; specialist routers require sentence-level language detection. |
+
+## Languages outside the supported sets
+
+If your target is Cantonese, Vietnamese, Thai, Arabic, or Hindi:
+
+- **Cantonese**: CosyVoice3 has first-class support via a `<|yue|>`
+  dialect token (plus 17 other Chinese dialects).
+- **VoxCPM2** covers 30 languages — start there for anything beyond
+  the JA / ZH / EN core.
+- For languages outside both: train a per-language specialist or
+  accept English-mode fallback as a stopgap.
 
 ## See also
 
-- [10-zero-shot-cloning.md](10-zero-shot-cloning.md) — base zero-shot tutorial
-- [12-integration.md](12-integration.md) — wiring multilingual cloning into an app
-- [02-comparison.md](02-comparison.md) — comparison of all 2026 multilingual TTS models
+- [ch. 10 — Zero-shot cloning](10-zero-shot-cloning.md) — the base
+  zero-shot request flow.
+- [ch. 14 — Cross-lingual limits](14-cross-lingual-limits.md) —
+  empirical accent-leak measurements.
+- [ch. 15 — vLLM-Omni Docker](15-vllm-omni-docker.md) — the deploy
+  walkthrough that all of the above ride on.
+- [ch. 15 — Picking a model](15-vllm-omni-model-selection.md) — full
+  per-model eval.
+- [per-language/](per-language/) — language-specific picks and
+  caveats.

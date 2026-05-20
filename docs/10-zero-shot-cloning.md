@@ -1,238 +1,203 @@
-# 10 — Zero-Shot Voice Cloning (Qwen3-TTS)
+# 10 — Zero-Shot Voice Cloning
 
-Clone any voice from 3–30 seconds of audio. No GPU training, no
-LoRA, no hyperparameter tuning. This guide walks through the whole
-end-to-end workflow using **Qwen3-TTS-12Hz-1.7B-Base**, which we
-picked over CosyVoice 3 / IndexTTS-2 / Higgs / ChatterBox after a
-multi-round listening test (see [02-comparison.md](02-comparison.md)).
+Zero-shot voice cloning is a one-line idea: **give the model a 5–10 s
+reference clip plus its transcript, and it speaks any text in that
+voice.** No GPU training, no LoRA, no dataset.
 
-## What you'll have at the end
+This chapter walks through the modern deploy path — pulling a TTS
+container, sending an HTTP request, and tuning the reference clip
+before reaching for fine-tuning.
 
-A working Python wrapper that takes a target text + your reference
-clip and emits a WAV in the cloned voice. Plus an OpenAI-compatible
-HTTP sidecar so the same model plugs into any chat/companion app
-through the [universal TTS spec](12-integration.md).
+## What "zero-shot" requires
 
-## Prerequisites
+Three inputs at request time:
 
-- Python 3.10 or newer
-- ~10 GB free disk (model weights are ~4 GB + caches)
-- NVIDIA GPU with ≥4 GB VRAM (CPU works at ~3-5× real-time)
-- A reference audio file of the voice you want to clone — see [§Reference clip](#reference-clip) for what makes a good one
+| Input | What it is | Notes |
+|---|---|---|
+| `ref_audio` | 5–10 s of clean target-voice audio | Single speaker, no music, peak ~0.8. |
+| `ref_text` | Exact transcript of `ref_audio` | The same script the speaker reads — used to anchor prompt features. |
+| `input` | The new text you want spoken | Any sentence in any supported language. |
 
-## Install
+No training data, no hyperparameter sweep. The cost is that voice
+fidelity depends entirely on the reference clip — see
+[ch. 16 — OmniVoice SFT](16-omnivoice-sft-recipe.md) if you need
+character-level timbre.
 
-```bash
-# Create a clean env (recommended)
-conda create -n qwen3-tts -y python=3.10
-conda activate qwen3-tts
+## The concrete recipe
 
-# Install qwen-tts (pulls in transformers, accelerate, etc.)
-pip install -U qwen-tts huggingface_hub soundfile
-
-# PyTorch with CUDA — match your CUDA version (12.8 example)
-pip install torch --index-url https://download.pytorch.org/whl/cu128
-
-# Optional, faster inference (sometimes finicky to build on Windows)
-pip install -U flash-attn --no-build-isolation
-```
-
-## Download model weights
+The recommended deploy in 2026 is **vLLM-Omni in Docker**: one
+container, one OpenAI-compatible URL, swap models with a profile flag.
+See [ch. 15 — vLLM-Omni Docker](15-vllm-omni-docker.md) for the full
+walkthrough; the short version is:
 
 ```bash
-huggingface-cli download Qwen/Qwen3-TTS-12Hz-1.7B-Base --local-dir ./qwen3-tts-1.7b-base
-huggingface-cli download Qwen/Qwen3-TTS-Tokenizer-12Hz --local-dir ./qwen3-tts-tokenizer
+# 1. Bring up the default OmniVoice service.
+docker compose up -d
+
+# 2. Verify the model is loaded.
+curl -s http://127.0.0.1:8000/v1/models
+# → { "data": [ { "id": "k2-fsa/OmniVoice", ... } ] }
 ```
 
-This downloads ~4 GB. The tokenizer is needed for the streaming codec
-path; download both even if you only plan to use non-streaming.
+A minimal `docker-compose.yml` for the default zero-shot service:
 
-## Reference clip
+```yaml
+services:
+  omnivoice:
+    image: vllm/vllm-omni:v0.20.0
+    ports:
+      - "8000:8000"
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+      - ./refs:/refs:ro
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ipc: host
+    shm_size: '8gb'
+    command: >
+      vllm serve k2-fsa/OmniVoice
+      --omni --host 0.0.0.0 --port 8000
+      --gpu-memory-utilization 0.40
+      --enforce-eager
+      --max-model-len 2048 --max-num-seqs 1
+      --allowed-local-media-path /refs
 
-The voice identity comes **entirely** from the reference clip. Picking
-it well is the most consequential single choice.
+volumes:
+  hf-cache:
+```
+
+## Sending a synth request
+
+The body is OpenAI-compatible plus three extension fields
+(`language`, `ref_audio`, `ref_text`):
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d "$(cat <<'JSON'
+{
+  "model":     "k2-fsa/OmniVoice",
+  "input":     "今日もよろしくお願いします。",
+  "language":  "Japanese",
+  "ref_audio": "data:audio/wav;base64,<base64 of your reference clip>",
+  "ref_text":  "<exact transcript of the reference clip>"
+}
+JSON
+)" \
+  -o hello.wav
+```
+
+Wire-contract gotchas (same as ch. 15):
+
+1. `ref_audio` must be a `data:audio/wav;base64,...` URL. File paths
+   are rejected by the media connector.
+2. `language` is the English name ("Japanese", "English", "Chinese"),
+   not a BCP-47 code.
+3. Response is raw 24 kHz mono WAV (`Content-Type: audio/wav`).
+   Errors come back as JSON.
+
+A reference Python client lives in `scripts/zero_shot_clone.py`.
+
+## Per-model nuances
+
+The same docker-compose flow serves multiple models behind profile
+flags. Each has different strengths for zero-shot:
+
+| Model | Profile | Strength | Caveats |
+|---|---|---|---|
+| **OmniVoice** (`k2-fsa/OmniVoice`) | _default_ | Japanese (36k+ hr JA pretrain, char-level Qwen3 tokenizer, FLEURS JA CER 5.96). | Mediocre EN baseline; not yet evaluated for ZH at the same depth. |
+| **CosyVoice3** (`FunAudioLLM/Fun-CosyVoice3-0.5B-2512`) | `--profile cosy3` | Chinese (CER 0.81% native ZH; SIM 78% beats human ref 75.5%). | Trained on kana-converted text; raw kanji input degrades JA content fidelity. |
+| **Qwen3-TTS** (`Qwen/Qwen3-TTS-12Hz-1.7B-Base`) | `--profile qwen` | Multilingual baseline across JA/ZH/EN/KO + 6 EU languages. | Generic — beaten on JA by OmniVoice and on ZH by CosyVoice3. |
+
+For the full empirical comparison and rejection rationale see
+[ch. 15 — Picking a vLLM-Omni model](15-vllm-omni-model-selection.md).
+
+## Tuning the reference clip
+
+If the output sounds *close but not right*, vary the reference clip
+before reaching for SFT.
 
 ### Length
 
-- **Minimum:** ~3 seconds. The model docs claim "rapid clone" at 3s
-  and that's true, but you'll lose nuance.
-- **Sweet spot:** **20–32 seconds** of *multi-clip* reference. A long
-  reference gives the speaker encoder a richer fingerprint and stops
-  the model from over-fitting to whatever prosody happens to be in a
-  single short clip.
-- **Maximum:** soft ceiling around 32 seconds. We measured AR
-  hallucinations (audio looping, breathy non-utterance) above ~49s.
-  **Don't exceed 32s.**
+| Length | What happens |
+|---|---|
+| < 3 s | Speaker fingerprint too thin; over-fits to short prosody. |
+| 5–10 s | **Sweet spot.** Single clean utterance. |
+| 20–30 s | Multi-clip reference; richer fingerprint, better cross-utterance consistency. |
+| > 32 s | AR hallucinations measured above ~49 s; avoid. |
 
 ### Cleanliness
 
 - No background music, no overlapping speakers, no laugh tracks.
-- Trim leading/trailing silences.
-- Normalize loudness so peak amplitude is ~0.8 (loud but not clipped).
-  Quiet refs (<0.3 peak) give weak speaker embeddings.
+- Trim leading/trailing silences (~50 ms padding is fine).
+- Normalize loudness so peak amplitude is ~0.8 — quiet refs (< 0.3
+  peak) give weak speaker embeddings.
 
-### Prosody diversity
+### Matching emotional register
 
-Critical for cross-utterance consistency. If your reference is all
-*declarative monologue*, the model will over-emote on casual targets
-(*"こんにちは!"* sounds like Shakespeare). A good multi-clip mix spans:
+The reference clip's prosody leaks into the output. If your reference
+is a calm declarative monologue and you ask the model to synthesize a
+casual greeting, the greeting will come out over-emoted.
 
-- A declarative / narrative sentence
-- A questioning sentence
-- An emotional / emphasized utterance
-- A casual / short / filler-rich sentence
-- An energetic / playful clip
+Recipe: build a multi-clip reference that spans the prosody range of
+your eventual use case — a declarative line, a question, a casual
+short line, an energetic line — concatenated with ~0.3 s gaps and
+re-normalized.
 
-`scripts/build_reference.py` automates the selection and concatenation
-(loudness-normalize + silence-trim + 0.3s gaps between clips).
+### Transcript accuracy
 
-### Transcript
+`ref_text` must be the **exact** transcript of `ref_audio`. A
+mistranscription (added word, dropped particle, wrong kanji) directly
+degrades prompt features. If you don't have the transcript, run
+faster-whisper:
 
-Each reference clip needs an exact transcript. The model uses it to
-compute paired prompt features that improve same-language cloning.
-Run your reference through faster-whisper or write it manually:
-
-```bash
-python -c "
+```python
 from faster_whisper import WhisperModel
-m = WhisperModel('small', device='cuda', compute_type='float16')
-segs, _ = m.transcribe('my_reference.wav', language='ja')
-print(''.join(s.text for s in segs))
-"
+m = WhisperModel("large-v3", device="cuda", compute_type="float16")
+segs, _ = m.transcribe("my_reference.wav", language="ja")
+print("".join(s.text for s in segs))
 ```
 
-## Minimal inference
+## When zero-shot isn't enough — reach for SFT
 
-```python
-import torch
-import soundfile as sf
-from qwen_tts import Qwen3TTSModel
+Zero-shot zero-shot ceiling is "in the ballpark — listenable, right
+gender / age range, plausible timbre." For distinctive character
+voices (anime, VTuber, fictional character), the missing 5–10% of
+timbre fidelity matters and zero-shot can't close it just by changing
+the reference clip.
 
-model = Qwen3TTSModel.from_pretrained(
-    "./qwen3-tts-1.7b-base",
-    device_map="cuda:0",
-    dtype=torch.bfloat16,
-    attn_implementation="sdpa",  # or "flash_attention_2" if installed
-)
+The next step is **supervised fine-tuning (SFT)** on ~10–20 minutes of
+the target voice. Full recipe at
+[ch. 16 — OmniVoice SFT](16-omnivoice-sft-recipe.md). End-to-end
+wallclock on a 16 GB consumer GPU is ~50 minutes (dataset prep +
+8-minute training run + checkpoint deploy).
 
-# Build (and cache) the prompt features for this reference clip
-prompt = model.create_voice_clone_prompt(
-    ref_audio="my_reference.wav",
-    ref_text="この間、コンテン神社でポテトチップスを食べてる女の子を見かけたの。",
-    x_vector_only_mode=False,  # see §Hybrid mode below
-)
+## Common failure modes
 
-# Synthesize
-wavs, sr = model.generate_voice_clone(
-    text="こんにちは、私は人工知能アシスタントです。",
-    language="Japanese",   # one of: Japanese, English, Chinese, Korean,
-                           # German, French, Russian, Portuguese, Spanish, Italian
-    voice_clone_prompt=prompt,
-    temperature=0.4,       # see §Sampling tuning
-    top_p=0.85,
-    max_new_tokens=240,
-)
-sf.write("hello_cloned.wav", wavs[0], sr)
-```
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Output is silent or 0.5 s of breathy noise | Speaker fingerprint too weak | Use a longer / cleaner reference clip. |
+| Output loops ("好嘞, 好嘞, 好嘞…") | AR diverged | Switch to a different reference clip; verify `ref_text` matches exactly. |
+| Voice drifts mid-utterance | Reference too short, or prosody mismatch | Use a 20–30 s multi-clip reference; match register. |
+| Casual sentence sounds over-emoted | Reference is all monologue | Add a casual / short clip to the reference set. |
+| Cross-lingual output sounds like the reference language | Phonotactic leak from short reference | See [ch. 14 — cross-lingual limits](14-cross-lingual-limits.md). |
 
-## Sampling tuning
+## See also
 
-The `temperature` and `top_p` parameters are the main quality dials.
-Both control how strict the model is to the speaker embedding's
-distribution.
-
-| Preset | temperature | top_p | max_new_tokens | Use when |
-|--------|-------------|-------|----------------|----------|
-| `fast` | 0.6 | 0.70 | 200 | Real-time conversation, snappy chunks |
-| `balanced` (default) | 0.4 | 0.85 | 240 | Most cases — natural voice fidelity |
-| `high` | 0.3 | 0.90 | 320 | Long-form / important responses |
-
-**Lower temperature** = stricter to reference = more in-character but
-less prosodic variation. **Higher temperature** = more natural prosody
-but voice drift. The 2026-validated sweet spot for character voice
-cloning is `temperature=0.4` (picked by user listening test from a
-28-sample sweep).
-
-The `max_new_tokens` cap is a **loop safety net** — Qwen3-TTS speech
-tokens run at 12 Hz, so 240 tokens caps output at ~20 s of audio. Set
-this even when you don't expect long outputs; it prevents runaway
-generation.
-
-## Hybrid mode: same-language vs cross-lingual
-
-Qwen3-TTS's `create_voice_clone_prompt` has an `x_vector_only_mode`
-toggle:
-
-- **`False` (default):** uses both the speaker embedding AND
-  prompt-text-paired features. Best voice clone fidelity when the
-  target language matches the reference language.
-- **`True`:** uses **only the speaker embedding**. Best for
-  cross-lingual targets — paired features carry the reference
-  language's phonotactics, which bleed into the target if you don't
-  drop them.
-
-**Recipe:** if your reference is JA and you're synthesizing JA, use
-`False`. For JA → ZH / KO / EN cross-lingual, use `True`. Cache both
-prompts so synthesis-time switching is free:
-
-```python
-prompts = {
-    "same_lang":     model.create_voice_clone_prompt(..., x_vector_only_mode=False),
-    "cross_lingual": model.create_voice_clone_prompt(..., x_vector_only_mode=True),
-}
-
-def synth(text, language):
-    is_same = (language == reference_language)
-    p = prompts["same_lang"] if is_same else prompts["cross_lingual"]
-    return model.generate_voice_clone(text=text, language=language,
-                                       voice_clone_prompt=p,
-                                       temperature=0.4, top_p=0.85)
-```
-
-This hybrid pattern was the key win that took our cross-lingual ZH
-score from 20% → 90% on a 33-case robustness eval.
-
-## DO NOT pre-normalize loanwords
-
-If you're carrying over text normalization code from a GPT-SoVITS
-era (e.g., converting "iPhone" → "アイフォン" before synthesis), **turn
-it off for Qwen3-TTS**. The LLM-based text encoder handles Latin
-loanwords, digits, and acronyms natively and produces canonical
-katakana. Manual normalization actually *hurts* — we measured cases
-where forcing "iPhone" → "イフォウン" made the model speak gibberish
-that it would have rendered correctly given the raw Latin input.
-
-## Common failure modes & fixes
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Output is silent / 0.5 s of breathy noise | `max_new_tokens` was hit on a short non-converging path | Bump temperature 0.1; usually unsticks |
-| Output goes into a loop ("好嘞, 好嘞, 好嘞...") | AR diverged with no token-cap stop | Lower `max_new_tokens` — we cap at 240 for 20s audio |
-| Voice drifts mid-utterance | Reference clip was too short / had too much prosodic variation | Use longer multi-clip ref; lower temperature 0.1 |
-| Casual sentence sounds over-emoted | Reference is all monologue, no casual prosody | Add a casual/short clip to the multi-clip ref |
-| Cross-lingual (JA→ZH) sounds JA-ish | x_vector_only mode wasn't switched on for cross-lingual | See §Hybrid mode |
-| EN/ZH/KO pronunciation is wrong | You pre-normalized loanwords | Disable normalization (see above) |
-
-## Validation: the 33-case robustness eval
-
-We validate every config change against a 33-case eval covering
-casual/loanword/digit/acronym/multi-sentence/special-char/name/llm-output
-patterns across ja/en/zh. Pass criteria per case: jaccard ≥ 0.40 to
-the gold transcript + length-ratio in [0.5, 1.6].
-
-Production config (`reference=concat_diverse5`,
-`temperature=0.4`, `top_p=0.85`, x_vector_only hybrid mode, no
-normalization) scores **32/33 (97%)**:
-
-- JA: 13/13 (100%) — clean + loanword + digit + acronym + name + special + multi all 100%
-- EN: 10/10 (100%)
-- ZH: 9/10 (90%) — sole failure is a Whisper-side homophone artifact, not a real TTS bug
-
-Reproduce with `scripts/eval_robustness.py`.
-
-## Next steps
-
-- **Multilingual + cross-lingual deep-dive:** [11-multilingual.md](11-multilingual.md)
-- **Integration into a chat app:** [12-integration.md](12-integration.md)
-- **What if zero-shot isn't enough?** Consider Path B (fine-tune GPT-SoVITS) —
-  start with [01-theory.md](01-theory.md) for the theory.
+- [ch. 11 — Multilingual](11-multilingual.md) — serving many languages
+  through one or many models.
+- [ch. 14 — Cross-lingual limits](14-cross-lingual-limits.md) —
+  empirical accent-leak measurements when the reference language differs
+  from the target.
+- [ch. 15 — vLLM-Omni Docker](15-vllm-omni-docker.md) — full deploy
+  walkthrough including troubleshooting and profile switching.
+- [ch. 15 — Picking a model](15-vllm-omni-model-selection.md) —
+  per-model eval that drove the defaults.
+- [ch. 16 — OmniVoice SFT](16-omnivoice-sft-recipe.md) — when
+  zero-shot timbre isn't close enough.

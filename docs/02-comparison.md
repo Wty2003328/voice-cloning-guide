@@ -1,178 +1,164 @@
-# 02 — How GPT-SoVITS Compares to Other Voice Cloning Models
+# 02 — Picking a TTS Model in 2026: A Decision Tree
 
-A pragmatic comparison of the dominant open-source voice cloning systems as of **May 2026**.
+The 2026 open-source TTS landscape has converged on a clear default
+pattern (**vLLM-Omni in Docker** serving an Apache/MIT-licensed
+multi-codebook LM) with a small set of well-understood escape hatches
+when the default doesn't fit. This page is the decision tree.
 
-## At a glance
+## TL;DR
 
-| Model | Type | Min audio | Quality | Speed | Languages | Windows-friendly |
-|---|---|---|---|---|---|---|
-| **Qwen3-TTS-12Hz-1.7B-Base** ★ | Zero-shot TTS | 3s ref | High | Fast (~1× RT) | 10 (zh/en/ja/ko/de/fr/ru/pt/es/it) | ✅ Yes |
-| **Fun-CosyVoice3-0.5B-2512** | Zero-shot TTS | 3s ref | High | Fast (~0.6× RT) | 9 + 18 Chinese dialects (incl. Cantonese) | ⚠️ Needs proprietary ttsfrd resource |
-| **IndexTTS-2** | Zero-shot TTS | 3-10s ref | High (anime expressive) | Fast | zh / en / ja only | ✅ Yes |
-| **Higgs Audio v2.5** | Zero-shot TTS | 3s ref | High | Medium | 20+ (no Cantonese) | ✅ Yes |
-| **Chatterbox Multilingual** | Zero-shot TTS | 3s ref | High | Medium | 23 langs (no Cantonese) | ✅ Yes |
-| **F5-TTS** | Zero-shot TTS | 5-10s ref | Medium-High | Medium | en+zh trained, others generalize | ✅ Yes |
-| **GPT-SoVITS v2** | Fine-tune TTS | 1 min | High | Fast (RT) | zh / ja / en / ko / yue | ✅ Yes |
-| **GPT-SoVITS v4** | Fine-tune TTS | 1 min | Higher (48k) | Fast | same | ✅ Yes |
-| **Fish Speech / OpenAudio S1** | Fine-tune + zero-shot | 1 min | High | Fast | zh / en / ja | ✅ Yes |
-| **RVC v2** | Voice conversion | 10 min | High | Real-time | Any (timbre only) | ✅ Yes |
-| **XTTS v2** | Zero-shot TTS | 10s ref | Medium-high | Slow | 17 languages | ✅ Yes |
-| **VibeVoice** (Microsoft) | Zero-shot TTS, long-form | 3s ref | High | Slow | ja/ko/zh | ✅ Yes (research lic) |
-| **Bark** | Zero-shot TTS | None | Low-Medium | Very slow | Multilingual | ✅ Yes |
-| **VoiceCraft** | Zero-shot TTS / edit | 3s ref | Medium | Medium | English-focused | ⚠️ Some bugs |
+1. **On the vLLM-Omni Docker path?** Pick from the vLLM-Omni-native
+   models — see [ch. 15 — Picking a model](15-vllm-omni-model-selection.md).
+2. **Need the absolute Japanese quality ceiling and can run a sidecar?**
+   Style-Bert-VITS2 JP-Extra is unbeaten on character-style JA MOS.
+3. **Already-have-GPT-SoVITS-v4 user?** The legacy LoRA fine-tune path
+   still works — see [`scripts/sovits-finetune/`](../scripts/sovits-finetune/).
 
-★ = this guide's default zero-shot pick.
+## Decision flow
 
-"Fine-tune TTS" means you train on a target speaker before inference.
-"Zero-shot TTS" means you supply a short reference at inference time only.
-"Voice conversion" means you supply a separate TTS as input and the model warps the timbre to match the target.
+```text
+                Need open-source TTS?
+                        │
+            Want OpenAI-compatible URL +
+            one-container deploy?
+                        │
+              ┌─────────┴─────────┐
+              │                   │
+             Yes                  No
+              │                   │
+       vLLM-Omni in Docker        │
+       (recommended path)         │
+              │                   │
+       Pick model by language ────│──────────────┐
+              │                   │              │
+        ┌─────┼─────┐             │              │
+        ▼     ▼     ▼             ▼              ▼
+       JA    ZH    EN        Need JA            Already
+        │     │     │        MOS ceiling?      have a
+        ▼     ▼     ▼              │           GPT-SoVITS
+       OmniVoice CosyVoice3 Open  ▼            v4 weights
+        +SFT      (Apache,  (eval Style-Bert-   set?
+       (ch.16)    CER 0.81)  in    VITS2          │
+                            flux)  JP-Extra       ▼
+                                    │            Legacy LoRA
+                                    │            path:
+                                    │            scripts/
+                                    │            sovits-finetune/
+                                    ▼
+                              Non-AR flow
+                              architecture;
+                              cannot ride vLLM-Omni
+                              cleanly — needs
+                              its own sidecar.
+```
 
-## When to use each
+## Per-language picks (2026-05)
 
-### Qwen3-TTS — best default for zero-shot cloning (this guide's Path A)
+| Language | Top pick | Profile / path |
+|---|---|---|
+| **Japanese** | OmniVoice + per-character SFT | `docker compose up` (default) + ch. 16 SFT recipe |
+| **Chinese** | CosyVoice3 | `docker compose --profile cosy3 up` |
+| **English** | Open — see [per-language/english.md](per-language/english.md) | `--profile qwen` (Qwen3-TTS baseline) or default OmniVoice |
+| **Multilingual (1 model, all langs)** | VoxCPM2 (30 langs) or Qwen3-TTS (~10 langs) | `vllm serve openbmb/VoxCPM2` or `--profile qwen` |
 
-Released Jan 2026 by Alibaba. The "give me 3 seconds of a voice, get
-back a model that speaks any text in that voice" path that **actually
-works well across multiple languages** without retraining.
+No model wins everywhere. The tree above is the production answer in
+2026-05; revisit the per-language pages for the model-by-model trade-offs.
 
-Use it when:
-- You have **3–30 seconds** of clean reference audio of the voice.
-- You want **cross-lingual output**: a Japanese reference can speak
-  English / Chinese / Korean / 6 others natively.
-- You want **a single model** that handles all the languages you need.
-- You're on a **single consumer GPU** (≥4 GB VRAM at bf16).
-- You don't have time / data / GPU budget to train a custom LoRA.
+## Model summary
 
-Skip it when:
-- You need **anime-character expressiveness** beyond what zero-shot
-  can do — fine-tune GPT-SoVITS v4 or IndexTTS-2.
-- You specifically need **Cantonese** — CosyVoice 3 has it natively.
-- Your reference clip is **<3 s** or contains background music / SFX
-  — clean it up first or it'll degrade speaker conditioning.
+| Model | License | Voice clone | Strength | Deploy |
+|---|---|---|---|---|
+| **OmniVoice** (`k2-fsa/OmniVoice`) | Apache-2.0 | Zero-shot 3–10 s + SFT recipe | Japanese (36k+ hr JA pretrain, char-level Qwen3 tokenizer) | vLLM-Omni Docker (default) |
+| **CosyVoice3** (`FunAudioLLM/Fun-CosyVoice3-0.5B-2512`) | Apache-2.0 | Zero-shot 3–30 s | Chinese (CER 0.81%, SIM 78% > human 75.5%); 18 Chinese dialects incl. Cantonese | vLLM-Omni Docker `--profile cosy3` |
+| **Qwen3-TTS-12Hz-1.7B-Base** | Apache-2.0 | Zero-shot 3–30 s | Multilingual baseline (JA / ZH / EN / KO + 6 EU langs) | vLLM-Omni Docker `--profile qwen` |
+| **VoxCPM2** (`openbmb/VoxCPM2`) | Apache-2.0 | Zero-shot ("Ultimate Cloning" mode) | 30 languages | `vllm serve openbmb/VoxCPM2` |
+| **Voxtral-TTS-4B** (Mistral) | Apache-2.0 | Zero-shot | Multilingual EU-centric; supports EN; explicitly does NOT support JA | vLLM-Omni Docker |
+| **Style-Bert-VITS2 JP-Extra** | AGPL-3.0 code | Per-voice fine-tune (~1–2 days train) | JA character-style MOS 4.37 (vs human 4.38) | Non-AR flow; needs its own Python sidecar |
+| **GPT-SoVITS v4 (LoRA)** | MIT | Per-voice fine-tune (~1 hour) | Legacy character voice path; ZH / JA / EN / KO / YUE | [`scripts/sovits-finetune/`](../scripts/sovits-finetune/) |
+| **Fish-Speech S2 Pro** (`fishaudio/s2-pro`) | Open weights | Zero-shot | Strongest JA paper numbers (CV3-Eval JA CER 3.96%) | Blocked — vLLM-Omni v0.20 has `ModuleNotFoundError: fish_speech` |
+| **IndexTTS-2** | bilibili proprietary | Zero-shot | 42k hr JA training; SS 0.833 / WER 9.95% Common Voice JA | Parked — multi-week port to vLLM-Omni |
+| **Higgs Audio v2.5** | Apache-2.0 | Zero-shot | Cross-lingual identity preservation | Rejected for 16 GB envelope (~10.75 GB weights alone) |
+| **RVC v2** | MIT | Voice conversion (not TTS) | Real-time live mic, singing | Separate process; chain after any TTS |
 
-Full walkthrough: [10-zero-shot-cloning.md](10-zero-shot-cloning.md).
+## When to pick each path
 
-### Fun-CosyVoice3 — best for Chinese-dialect coverage
+### vLLM-Omni Docker — the recommended path
 
-Released Dec 2025 by Alibaba's FunAudio team. Strong cross-lingual
-quality, **first-class Cantonese support** via a `<|yue|>` dialect
-token (plus 17 other Chinese dialects). The CosyVoice 3 paper
-documents how they fixed the JA→ZH "kanji bleed" bug that plagued
-earlier models — they pre-convert JA text to katakana.
+Pick this when:
 
-Use it when:
-- You specifically need Cantonese, Hokkien, Sichuanese, or other
-  Chinese dialects.
-- You're willing to wrangle a more complex install (proprietary
-  `ttsfrd` text frontend isn't in the HF distribution — without it,
-  the model emits fluent audio with *unrelated* content).
+- You want **one OpenAI-compatible URL** any client can talk to.
+- You want to **swap models with a profile flag**, not reinstall a
+  Python env per engine.
+- You have **Docker + nvidia-container-toolkit + a ≥ 8 GB GPU** (16 GB
+  for headroom if Windows desktop shares the device).
 
-Skip it when:
-- The proprietary frontend issue blocks your install. Qwen3-TTS gets
-  you 80% of the same coverage with a clean install.
+Skip when:
 
-### IndexTTS-2 — best anime / character expressiveness
+- The model you need isn't in the vLLM-Omni-native set (e.g. Style-Bert-VITS2,
+  IndexTTS-2 — both require their own runtimes).
+- You're on a CPU-only host. vLLM-Omni requires CUDA.
 
-Released Sep 2025 by Bilibili. Disentangled emotion / speaker /
-duration control. Excellent on JA anime-style voices. Limited to
-zh/en/ja (no KO support).
+### Style-Bert-VITS2 JP-Extra — the JA quality ceiling
 
-Use it when:
-- You're cloning an **anime character voice** specifically and need
-  more emotional range than the other zero-shot models.
-- ZH+EN+JA are the only languages you need.
+Pick this when:
 
-### Higgs Audio v2.5 — strong dark horse
+- The MOS ceiling on character-style Japanese matters more than deploy
+  simplicity.
+- You can afford a separate Python sidecar process (its own
+  conda env, its own healthz route, its own request format).
 
-Boson AI. Apache-2.0. Unified text-audio LM. Vendor evals report
-high cross-lingual identity preservation. GRPO-aligned for
-EN/ZH/JA/KO. 1B distilled variant fits cleanly in 16 GB.
+The architecture is non-AR (VITS / flow-matching VAE), which means it
+can't share vLLM-Omni's PagedAttention or its OpenAI-compatible
+adapter cleanly. It needs to run as its own service.
 
-Use it when:
-- You want a single model for EN+ZH+JA+KO and Qwen3-TTS quality on
-  your specific voice isn't quite enough — worth an A/B.
+Deep dive: [`models/style-bert-vits2.md`](models/style-bert-vits2.md).
 
-### ChatterBox Multilingual — best language breadth among zero-shot
+### Legacy GPT-SoVITS v4 LoRA — already-have-v4 users
 
-Resemble AI. MIT licensed. 23 languages including ja/ko/zh. Has a
-`cfg_weight=0.0` knob specifically to reduce accent bleed in
-cross-lingual. Currently #1 in TTS-Arena's voice-cloning leaderboard.
+Pick this when:
 
-Use it when:
-- You need languages beyond Qwen3-TTS's 10 (esp. Vietnamese, Hindi,
-  etc.) AND can live without Cantonese.
+- You already have a GPT-SoVITS v4 weights set and don't want to redo
+  the dataset.
+- You specifically want the SoVITS-style training pipeline (Demucs +
+  slicer + ASR + features + semantic + SoVITS + GPT training).
 
-### GPT-SoVITS — best default for fine-tune character voice cloning
+Scripts: [`scripts/sovits-finetune/`](../scripts/sovits-finetune/).
+Deep dive: [`models/gpt-sovits-v4.md`](models/gpt-sovits-v4.md).
 
-Use it when:
-- You want **anime / game / streamer** style voices — the kind of expressive, stylized speech that needs the model to learn prosody patterns, not just timbre.
-- You have **1-30 minutes** of training audio available.
-- You need **multi-lingual output**: train on Japanese, generate in English / Chinese / Korean.
-- You're on **Windows** with a single GPU.
+For **new** projects, prefer the OmniVoice SFT recipe — same data
+requirement (~20 min), shorter wallclock, drops straight into the
+production Docker compose. See
+[ch. 16 — OmniVoice SFT](16-omnivoice-sft-recipe.md).
 
-Skip it when:
-- You only have a 10-second reference and can't get more — use XTTS or VoiceCraft.
-- You need real-time voice conversion of live input — use RVC.
-- Your target language isn't in zh/ja/en/ko/yue (the v2 phonemizer set).
+### Voice conversion (RVC v2)
 
-### RVC v2 — best for live voice conversion (singing, streaming)
+Pick this when:
 
-RVC is fundamentally different: it doesn't synthesize speech from text. Instead, it takes existing audio (e.g., your microphone, a song you sang) and re-renders it in a target voice. This makes it the only good choice for:
-- Singing voice cloning (RVC retains pitch perfectly).
-- Real-time conversion during live streams.
-- Use cases where you already have a TTS you like and just want to swap the timbre.
+- Live-mic real-time conversion is the use case (streaming, singing).
+- You want to chain into an existing TTS just for timbre.
 
-Drawback: RVC only swaps timbre. The prosody (rhythm, emphasis, pacing) comes from the input audio. If you want the *speaker's mannerisms* — pauses, sigh-y exhales, rising sentence endings — RVC can't give you those. GPT-SoVITS can.
+RVC swaps timbre only — prosody comes from the input audio. For
+single-character TTS, the modern recipe (OmniVoice or CosyVoice3 +
+SFT) replaces the historical "TTS + RVC" chain at lower latency and
+higher quality.
 
-A common production pipeline used to be **TTS + RVC** (any TTS for content, RVC for timbre conversion). With fine-tuned GPT-SoVITS, this is mostly obsolete: a single fine-tuned GPT-SoVITS captures both prosody and timbre, with no quality loss from chaining models, and is faster.
+## What changed since the 2024 / early-2026 era
 
-### CosyVoice 2/3 — best zero-shot quality
+Pre-2026 production patterns (per-engine Python sidecars, one process
+per model) are deprecated for new projects. The vLLM-Omni Docker pattern
+consolidates ~14 TTS architectures into one container image, one URL,
+one wire contract. Existing sidecar deploys still work; new builds
+should start from [ch. 15 — vLLM-Omni Docker](15-vllm-omni-docker.md).
 
-If you only have a short reference and want production quality without fine-tuning, CosyVoice 2/3 is hard to beat. The flow-matching architecture produces remarkably clean output and handles emotion conditioning well.
+## See also
 
-Drawback: the fine-tuning code path requires DeepSpeed, which is painful on Windows. If you're committing to a fine-tune workflow, GPT-SoVITS is more accessible. If you want zero-shot, CosyVoice usually wins on naturalness.
-
-### XTTS v2 — best for breadth of language support
-
-17 languages out of the box, including European languages GPT-SoVITS doesn't handle. Zero-shot only — fine-tuning isn't really supported.
-
-Drawback: quality ceiling is noticeably lower than GPT-SoVITS or CosyVoice for the languages all three support, and prosody is somewhat flat.
-
-### Bark — historical interest mostly
-
-Bark introduced zero-shot voice cloning to the open-source world but has been superseded on every dimension: slower, lower quality, less controllable. Skip unless you need the specific Bark "music + voice" capability.
-
-### Fish Speech — close GPT-SoVITS competitor
-
-Architectural cousin of GPT-SoVITS (also a two-stage GPT + decoder design). Comparable quality. Slightly different language coverage (no Korean). Fine to use either one — pick by which has better tooling for your use case. As of 2026 GPT-SoVITS has more community resources and tutorials (this repo being one).
-
-### VoiceCraft — speech editing niche
-
-VoiceCraft's strength is that it can edit existing speech — splice in new words while matching the surrounding voice. Useful for correcting recordings. As a general TTS it's solid but unremarkable.
-
-## Why this guide picks GPT-SoVITS for fine-tuning
-
-Three reasons specifically:
-
-1. **Single GPU, Windows-friendly**. Most modern TTS models assume Linux + multi-GPU + DDP. GPT-SoVITS works fine on a single consumer card with a few small bypasses (this repo's job is to document those).
-
-2. **Multi-lingual output from monolingual training**. Train on 15 minutes of Japanese, get usable English and Chinese output. CosyVoice can do this too; XTTS cannot.
-
-3. **The model architecture is small enough to teach**. Two clean components (GPT + SoVITS) with explicit data flow. CosyVoice's DiT + flow-matching is mathematically cleaner but harder to debug; XTTS hides everything behind a black-box CLI.
-
-## What about TTS+RVC (the historical pipeline)?
-
-Older voice cloning tutorials chain a generic TTS (often XTTS or Bark) into RVC for timbre conversion. This was a workaround for the lack of good single-stage fine-tunable TTS. Now that GPT-SoVITS exists, the chained approach is mostly worse:
-
-- **More compute.** Two model loads, two inference passes per request.
-- **Quality degradation at the boundary.** RVC is good but not transparent — you lose some fidelity at the conversion step.
-- **Worse prosody.** RVC inherits whatever the upstream TTS produces. Fine-tuned GPT-SoVITS produces prosody specific to your target speaker.
-- **Hard to coordinate languages.** If RVC is trained on Japanese audio but the input TTS is English, the conversion can produce artifacts.
-
-Use TTS+RVC only when you need **real-time** conversion (live mic input) and can't pre-render the speech.
-
-## Further reading
-
-- The CosyVoice paper for a great writeup of flow-matching TTS: https://arxiv.org/abs/2407.05407
-- RVC's GitHub for the voice-conversion approach: https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI
-- A broader survey of voice cloning: https://arxiv.org/abs/2505.00579
+- [ch. 00 — Landscape 2026](00-landscape-2026.md) — architecture taxonomy
+  + license matrix.
+- [ch. 15 — vLLM-Omni Docker](15-vllm-omni-docker.md) — production
+  deploy walkthrough.
+- [ch. 15 — Picking a model](15-vllm-omni-model-selection.md) — empirical
+  per-model eval.
+- [ch. 16 — OmniVoice SFT](16-omnivoice-sft-recipe.md) — fine-tuning a
+  character voice on the production stack.
+- [per-language/](per-language/) — language-specific picks.
+- [models/](models/) — per-model deep dives.

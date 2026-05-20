@@ -1,65 +1,85 @@
 # Multilingual TTS — when one model serves many languages
 
-> **Status:** Research in progress (task #141). This page complements
-> the per-language pages: it covers the case where you want ONE model
-> handling all languages instead of N specialized engines.
+When you want **one TTS service speaking many languages** instead of N
+language-specialized services. Lowest VRAM, simplest ops, but the
+per-language quality ceiling is the model's weakest language.
 
-## When you want a single multilingual model
+For the broader picture (specialist-per-language vs one multilingual
+model; cross-lingual cloning), see
+[ch. 11 — Multilingual](../11-multilingual.md).
 
-- VRAM tight (one model ~1-3 GB vs N×1-3 GB for specialized)
-- Voice clone consistency across languages is the priority (same
-  speaker_embedding produces "the same voice" regardless of language —
-  with specialized engines, each language's speaker encoder differs)
-- Deployment simplicity (one process, one set of weights, one update
-  path)
-- Mixed-language content within a single utterance (English loanwords
-  in Japanese chat, code-mixed reply) — multilingual models handle this
-  natively; routing to specialized engines requires sentence-level
-  language detection
+## When to want one multilingual model
 
-## When you want specialized per-language (multi-engine)
+- Tight VRAM budget — one model loaded vs N×.
+- Voice-clone consistency across languages — same speaker embedding
+  produces "the same voice" regardless of target language.
+- Mixed-language sentences within one utterance ("APIを設定して
+  ください") — multilingual models handle in-sentence code-switching
+  natively.
+- Deployment simplicity — one container, one set of weights, one
+  update path.
 
-- Per-language quality matters more than cross-language consistency
-- You can afford the VRAM + deployment complexity
-- Most replies are single-language (chat in JA, then ZH later — not
-  mid-sentence switching)
-
-See [../deployment/multi-engine.md](../deployment/multi-engine.md) for
-the router architecture that lets you keep both options open: route by
-language to specialized engines for JA/ZH/EN, fall back to a
-multilingual generalist for everything else.
+If per-language quality matters more than these — read the
+language-specific pages instead.
 
 ## Candidate multilingual models
 
-1. **Qwen3-TTS-12Hz-1.7B-Base** — Apache-2.0, true zero-shot,
-   sub-real-time. JA/EN/ZH/KO/DE/FR/RU/PT/ES/IT supported. Quality
-   uneven across languages (JA mediocre vs native-JA models). Our
-   production baseline. [Deep dive](../models/qwen3-tts.md).
+| Model | Languages | Profile / command | VRAM |
+|---|---|---|---|
+| **VoxCPM2** (`openbmb/VoxCPM2`) | 30 languages including JA / ZH / EN / KO | `vllm serve openbmb/VoxCPM2 --omni --host 0.0.0.0 --port 8000` | ~8 GB |
+| **Qwen3-TTS-12Hz-1.7B-Base** | JA / ZH / EN / KO + DE / FR / RU / PT / ES / IT (~10) | `--profile qwen` | ~4 GB |
+| **OmniVoice** (`k2-fsa/OmniVoice`) | Multilingual; JA is the strongest by training-hours dominance | _default_ | ~7 GB system |
+| **CosyVoice3** (`FunAudioLLM/Fun-CosyVoice3-0.5B-2512`) | 9 base + 18 Chinese dialects (incl. Cantonese) | `--profile cosy3` | ~3 GB container delta |
+| **XTTS-v2** (Coqui) | 17 languages | Separate sidecar (not in vLLM-Omni-native set) | ~2 GB |
 
-2. **CosyVoice 3** — Apache-2.0, multilingual. Strongest in Chinese
-   but good across all supported languages. Heavier deployment for
-   peak performance (TensorRT-LLM via WSL2).
+All Apache-2.0 (or equivalent permissive) except XTTS-v2 (CPML
+weights; legal gray since the 2024 Coqui shutdown).
 
-3. **XTTS-v2 (Coqui)** — MPL/CPML, multilingual zero-shot. Older
-   (2023) but battle-tested. Good speaker fidelity.
+## Picking among them
 
-4. **MeloTTS** — MIT, fast inference, multilingual. Lower quality
-   ceiling than the above; useful when latency matters most.
+| Priority | Pick | Why |
+|---|---|---|
+| Widest language reach (30) | **VoxCPM2** | Most languages of any current open model. |
+| Balanced JA / ZH / EN baseline | **Qwen3-TTS** | Covers the big three with documented uneven-but-acceptable quality. |
+| JA-strongest single model | **OmniVoice** | 36k+ hours JA pretrain; multilingual but JA wins. |
+| ZH-strongest, plus Cantonese | **CosyVoice3** | CER 0.81% native ZH, `<|yue|>` dialect token. |
 
-## Recommendation (preliminary)
+There is no model that wins per-language against every specialist. The
+question is whether the multilingual ceiling is good enough for your
+specific use case. For chat / companion / VTuber workloads it usually
+is; for broadcast / audiobook in a non-strong language, switch to a
+specialist.
 
-For most users: **Qwen3-TTS-12Hz-1.7B-Base** as the multilingual
-generalist + multi-engine router for per-language quality where it
-matters most (typically JA).
+## Cross-lingual cloning
 
-Once research lands, this page will include:
-- Cross-language quality matrix (each model × each language)
-- Voice consistency scores (cosine similarity of speaker embeddings
-  across languages, same reference)
-- Code-mixing test cases (JA-embedded EN, etc.)
+A separate question from "which multilingual model": can a single ref
+clip in language A produce intelligible speech in language B? Short
+answer: **content holds, accent leaks** in modern (2025+) multilingual
+codebook architectures. Empirical measurements at
+[ch. 14 — Cross-lingual limits](../14-cross-lingual-limits.md).
+
+## Deploy
+
+Same vLLM-Omni Docker compose as every other model. To bring up Qwen3-TTS
+as a multilingual generalist:
+
+```bash
+docker compose --profile qwen up -d
+curl -s http://127.0.0.1:8000/v1/models
+# → { "data": [ { "id": "Qwen/Qwen3-TTS-12Hz-1.7B-Base", ... } ] }
+```
+
+Switch language per request via the `language` field — see
+[ch. 11 — Multilingual](../11-multilingual.md) for the same-model
+multi-language request pattern.
 
 ## See also
 
-- [../11-multilingual.md](../11-multilingual.md) — cross-lingual zero-shot cloning recipe (using Qwen3-TTS specifically)
-- [japanese.md](japanese.md), [chinese.md](chinese.md), [english.md](english.md) — per-language alternatives
-- [../deployment/multi-engine.md](../deployment/multi-engine.md) — sidecar router that combines multilingual + specialized engines
+- [../11-multilingual.md](../11-multilingual.md) — strategies and
+  cross-lingual cloning.
+- [../15-vllm-omni-docker.md](../15-vllm-omni-docker.md) — production
+  deploy walkthrough.
+- [../15-vllm-omni-model-selection.md](../15-vllm-omni-model-selection.md)
+  — per-model eval.
+- [japanese.md](japanese.md), [chinese.md](chinese.md), [english.md](english.md)
+  — per-language specialist picks.
